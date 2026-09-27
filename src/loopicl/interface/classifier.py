@@ -19,15 +19,18 @@ accumulation.
 Usage::
 
     from loopicl.interface import LoopICLClassifier
-    from loopicl.interface.wrap_model import TabICLWrapper
 
-    clf = LoopICLClassifier(wrapper=tabicl_wrapper, n_estimators=8, batch_size=8)
+    clf = LoopICLClassifier()                        # default checkpoint, auto device
+    clf = LoopICLClassifier(use_early_exit=True)     # EE checkpoint, exit_q=0.5
+    clf = LoopICLClassifier(use_early_exit=True, exit_q=0.3)  # aggressive early exit
     clf.fit(X_train, y_train)
     proba = clf.predict_proba(X_test)
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -37,10 +40,14 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.validation import check_is_fitted
 
+# Default checkpoints — resolved relative to the repo root.
+_REPO_ROOT = Path(__file__).parent.parent.parent.parent
+_DEFAULT_WEIGHTS    = str(_REPO_ROOT / "results" / "weights" / "loopicl-cls-stage2-step-30000.ckpt")
+_DEFAULT_EE_WEIGHTS = str(_REPO_ROOT / "results" / "weights" / "loopicl-cls-ee-step-4000.ckpt")
+
 from loopicl.interface._preprocessing import (
     EnsembleGenerator,
     XEncoder,
-    _get_wrapper_device,
     _has_prefill,
     _quantize_cache,
     _wrapper_prefill,
@@ -141,10 +148,33 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
 
     Parameters
     ----------
-    wrapper : TransformerWrapper
-        The LoopICL model wrapped in a ``TransformerWrapper`` (e.g. ``TabICLWrapper``).
-        Called as ``wrapper(X_full, y_train, eval_pos)`` with numpy arrays;
-        returns logits of shape ``(B, n_test, n_classes)`` for batched inputs.
+    model : LoopICL or None, default=None
+        The LoopICL model.  If ``None``, loaded automatically from ``weights_path``.
+    weights_path : str or None, default=None
+        Path to a ``.ckpt`` checkpoint containing ``"config"`` and
+        ``"ema_state_dict"`` keys.  Used only when ``model`` is ``None``.
+        Defaults to the standard or early-exit checkpoint depending on
+        ``use_early_exit``.
+    use_early_exit : bool, default=False
+        When ``True``, loads the early-exit checkpoint
+        (``loopicl-cls-ee-step-4000.ckpt``) and sets ``exit_q=0.5`` if no
+        explicit ``exit_q`` is given.  The early-exit model gates each ICL
+        loop and exits early once the gate CDF exceeds ``exit_q``, trading
+        a small accuracy cost for significant inference speedup.
+    device : str or None, default=None
+        Torch device to run inference on (e.g. ``"cuda"``, ``"cpu"``).
+        If ``None``, auto-detected from the model parameters.
+    dtype : str, default="float32"
+        Compute dtype: ``"float32"``, ``"float16"``, or ``"bfloat16"``.
+    num_loops : int or None, default=None
+        Override the number of ICL loop iterations at inference time.
+        If ``None``, uses the model's default.
+    mrl_dim : int or None, default=None
+        MRL dimension override.
+    loop_residual_scaling_fn : str or None, default=None
+        Override the loop residual scaling function.
+    exit_q : float or None, default=None
+        Early-exit quantile threshold.
     n_estimators : int, default=8
         Total number of ensemble members.
     norm_methods : str or list[str] or None, default=None
@@ -221,7 +251,15 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
 
     def __init__(
         self,
-        wrapper,
+        model=None,
+        weights_path: Optional[str] = None,
+        use_early_exit: bool = False,
+        device=None,
+        dtype: str = "float32",
+        num_loops: Optional[int] = None,
+        mrl_dim: Optional[int] = None,
+        loop_residual_scaling_fn: Optional[str] = None,
+        exit_q: Optional[float] = None,
         n_estimators: int = 8,
         norm_methods: Optional[str | list] = None,
         feat_shuffle_method: str = "latin",
@@ -238,7 +276,21 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         multiclass_strategy: str = "tabpfn",
         random_state: Optional[int] = 42,
     ):
-        self.wrapper = wrapper
+        if model is None:
+            if weights_path is None:
+                weights_path = _DEFAULT_EE_WEIGHTS if use_early_exit else _DEFAULT_WEIGHTS
+            model = self._load_checkpoint(weights_path, device)
+            if use_early_exit and exit_q is None:
+                exit_q = 0.5
+        self.model = model
+        self.weights_path = weights_path
+        self.use_early_exit = use_early_exit
+        self.device = device
+        self.dtype = dtype
+        self.num_loops = num_loops
+        self.mrl_dim = mrl_dim
+        self.loop_residual_scaling_fn = loop_residual_scaling_fn
+        self.exit_q = exit_q
         self.n_estimators = n_estimators
         self.norm_methods = norm_methods
         self.feat_shuffle_method = feat_shuffle_method
@@ -254,6 +306,89 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         self.max_features = max_features
         self.multiclass_strategy = multiclass_strategy
         self.random_state = random_state
+
+    @staticmethod
+    def _load_checkpoint(weights_path: str, device=None):
+        import dataclasses
+        ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
+        cfg = dict(ckpt["config"])
+        # Rename legacy key
+        if "max_classes" in cfg and "max_num_classes" not in cfg:
+            cfg["max_num_classes"] = cfg.pop("max_classes")
+
+        # Detect early-exit checkpoint by presence of gate config keys
+        if "gate_delta_out_dim" in cfg:
+            from loopicl.models.loopicl.model_early_exit_v2 import (
+                LoopICLEarlyExitV2,
+                LoopICLEarlyExitV2Config,
+            )
+            valid = set(LoopICLEarlyExitV2Config.__dataclass_fields__)
+            cfg = {k: v for k, v in cfg.items() if k in valid}
+            model = LoopICLEarlyExitV2(**cfg)
+        else:
+            from loopicl.models.loopicl.model import LoopICL, LoopICLConfig
+            valid = {f.name for f in dataclasses.fields(LoopICLConfig)}
+            cfg = {k: v for k, v in cfg.items() if k in valid}
+            model = LoopICL(LoopICLConfig(**cfg))
+
+        state_key = "ema_state_dict" if "ema_state_dict" in ckpt else "state_dict"
+        model.load_state_dict(ckpt[state_key])
+        target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(target_device)
+        model.eval()
+        return model
+
+    def _resolve_device(self):
+        if self.device is not None:
+            return self.device
+        try:
+            return next(self.model.parameters()).device
+        except StopIteration:
+            return "cpu"
+
+    def _call_model(self, X_np: np.ndarray, y_np: np.ndarray, eval_pos: int) -> np.ndarray:
+        """Convert numpy arrays to tensors, run the model, return numpy logits.
+
+        Supports both batched (3-D X) and single (2-D X) inputs.
+        """
+        device = self._resolve_device()
+        X_t = torch.as_tensor(X_np.astype(np.float32), device=device)
+        y_t = torch.as_tensor(y_np.astype(np.float32), device=device)
+
+        _dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
+        amp_dtype = _dtype_map.get(self.dtype)
+
+        kwargs: dict = {"return_logits": True}
+        if self.num_loops is not None:
+            kwargs["num_loops"] = self.num_loops
+        if self.mrl_dim is not None:
+            kwargs["mrl_dim"] = self.mrl_dim
+        if self.exit_q is not None:
+            kwargs["exit_q"] = self.exit_q
+
+        orig_fn = None
+        if self.loop_residual_scaling_fn is not None and hasattr(self.model, "loop_residual_scaling_fn"):
+            orig_fn = self.model.loop_residual_scaling_fn
+            self.model.loop_residual_scaling_fn = self.loop_residual_scaling_fn
+
+        try:
+            with torch.no_grad():
+                if amp_dtype is not None and "cuda" in str(device):
+                    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                        if X_t.ndim == 3:
+                            out = self.model(X_t, y_t, **kwargs)
+                        else:
+                            out = self.model(X_t.unsqueeze(0), y_t.unsqueeze(0), **kwargs).squeeze(0)
+                else:
+                    if X_t.ndim == 3:
+                        out = self.model(X_t, y_t, **kwargs)
+                    else:
+                        out = self.model(X_t.unsqueeze(0), y_t.unsqueeze(0), **kwargs).squeeze(0)
+        finally:
+            if orig_fn is not None:
+                self.model.loop_residual_scaling_fn = orig_fn
+
+        return out.float().cpu().numpy()
 
     # ------------------------------------------------------------------
     # fit
@@ -287,7 +422,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
 
         # Many-class support: if n_classes exceeds the model's capacity, use
         # mixed-radix decomposition (similar to TabICL's approach).
-        _max_classes = getattr(self.wrapper, "max_classes", None)
+        _max_classes = getattr(self.model, "max_classes", None)
         if _max_classes is not None and self.n_classes_ > _max_classes:
             self._mr_bases = _compute_mr_bases(self.n_classes_, _max_classes)
             self._mr_digit_map = _make_digit_map(self.n_classes_, self._mr_bases)
@@ -327,7 +462,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         self.ensemble_generator_.fit(X_enc, y_enc)
 
         # Build fit-time KV cache when requested and the model supports it.
-        if self.cache_context and _has_prefill(self.wrapper):
+        if self.cache_context and _has_prefill(self.model):
             self.context_caches_, self._context_cache_batch_size_ = (
                 self._build_context_cache()
             )
@@ -355,7 +490,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
             batch_X_train = np.stack(all_X_train[start:end], axis=0)
             batch_y = np.stack(all_y[start:end], axis=0)
 
-            cache = _wrapper_prefill(self.wrapper, batch_X_train, batch_y)
+            cache = _wrapper_prefill(self.model, self._resolve_device(), self.dtype, batch_X_train, batch_y)
             if self.quantize_kv_cache:
                 cache = _quantize_cache(cache)
             if self.keep_cache_on_cpu:
@@ -368,17 +503,29 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
     # predict_proba
     # ------------------------------------------------------------------
 
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+    def predict_proba(self, X: np.ndarray, num_loops: Optional[int] = None) -> np.ndarray:
         """Predict class probabilities via the LoopICL ensemble.
 
         Parameters
         ----------
         X : array-like of shape (n_test, n_features)
+        num_loops : int or None, default=None
+            Override the number of ICL loop iterations for this call only.
+            If ``None``, uses the value set at construction time.
 
         Returns
         -------
         proba : ndarray of shape (n_test, n_classes)
         """
+        _prev_num_loops = self.num_loops
+        if num_loops is not None:
+            self.num_loops = num_loops
+        try:
+            return self._predict_proba_impl(X)
+        finally:
+            self.num_loops = _prev_num_loops
+
+    def _predict_proba_impl(self, X: np.ndarray) -> np.ndarray:
         check_is_fitted(self, ["ensemble_generator_"])
 
         X_enc = self.X_encoder_.transform(X)
@@ -413,7 +560,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         #   use_two_phase      — call prefill+decode per predict() call
         #   standard path      — single concatenated forward pass
         use_cache_context = self.cache_context and hasattr(self, "context_caches_")
-        use_two_phase = _has_prefill(self.wrapper) and (
+        use_two_phase = _has_prefill(self.model) and (
             self.test_chunk_size is not None or use_cache_context
         )
 
@@ -435,7 +582,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
                     [x[:n_train] for x in all_X[start:end]], axis=0
                 )
                 batch_y = np.stack(all_y[start:end], axis=0)
-                cache = _wrapper_prefill(self.wrapper, batch_X_train, batch_y)
+                cache = _wrapper_prefill(self.model, self._resolve_device(), self.dtype, batch_X_train, batch_y)
                 if self.quantize_kv_cache:
                     cache = _quantize_cache(cache)
                 # Move to CPU immediately after prefill so the test-chunk
@@ -460,10 +607,10 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
                     # Restore cache to GPU only for this decode call, then
                     # immediately push back to CPU to free VRAM for the forward pass.
                     if self.keep_cache_on_cpu:
-                        device = _get_wrapper_device(self.wrapper)
+                        device = self._resolve_device()
                         cache = cache.to(device)
                     logits = _wrapper_predict_cached(
-                        self.wrapper, batch_X_chunk, cache
+                        self.model, self._resolve_device(), self.dtype, batch_X_chunk, cache
                     )
                     if self.keep_cache_on_cpu:
                         cache = cache.to("cpu")
@@ -471,9 +618,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
                     batch_X = np.concatenate(
                         [batch_X_train, batch_X_chunk], axis=1
                     )
-                    logits = self.wrapper(batch_X, batch_y, eval_pos=n_train)
-                    if isinstance(logits, torch.Tensor):
-                        logits = logits.float().cpu().numpy()
+                    logits = self._call_model(batch_X, batch_y, eval_pos=n_train)
                 # logits: (B, chunk, n_classes) in permuted class order
 
                 for i in range(end - start):
@@ -567,9 +712,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
                     axis=0,
                 ).astype(np.float32)  # (bs, n_train)
 
-                logits = self.wrapper(X_batch, y_digit_batch, eval_pos=n_train)
-                if isinstance(logits, torch.Tensor):
-                    logits = logits.float().cpu().numpy()
+                logits = self._call_model(X_batch, y_digit_batch, eval_pos=n_train)
 
                 # logits: (bs, n_test, max_classes) — take first base_d slots
                 accum_d += logits[:, :, :base_d].astype(np.float64).sum(axis=0)
@@ -595,8 +738,8 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
     # predict
     # ------------------------------------------------------------------
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray, num_loops: Optional[int] = None) -> np.ndarray:
         """Predict class labels for X."""
-        proba = self.predict_proba(X)
+        proba = self.predict_proba(X, num_loops=num_loops)
         indices = np.argmax(proba, axis=1)
         return self.classes_[indices]

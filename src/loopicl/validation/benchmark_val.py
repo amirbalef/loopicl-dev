@@ -12,8 +12,8 @@ from loopicl.evaluation.metrics import (
 )
 from loopicl.evaluation.setup import load_all_results, iter_benchmark_datasets
 from loopicl.validation.base import BaseValidator
-from loopicl.interface.wrap_interface import wrap_interface
-from loopicl.interface.wrap_model import TabICLWrapper, IrisMELTTwoPhaseWrapper, LoopICLRegWrapper
+from loopicl.interface import LoopICLClassifier
+from loopicl.interface.regressor import LoopICLRegressor
 
 
 def _build_candidate_clf(
@@ -33,21 +33,29 @@ def _build_candidate_clf(
     from sklearn.impute import SimpleImputer
     from sklearn.pipeline import Pipeline
 
-    WrapperCls = IrisMELTTwoPhaseWrapper if use_two_phase_inference else TabICLWrapper
-    wrapper_kwargs = dict(dtype=dtype, num_loops=num_loops, mrl_dim=mrl_dim)
-    if not use_two_phase_inference and loop_residual_scaling_fn is not None:
-        wrapper_kwargs["loop_residual_scaling_fn"] = loop_residual_scaling_fn
-    if not use_two_phase_inference and exit_q is not None:
-        wrapper_kwargs["exit_q"] = exit_q
-    base_clf = wrap_interface(
-        "tabicl",
-        task_type=task_type,
-        model=WrapperCls(model, device, **wrapper_kwargs),
-        device=device,
-        batch_size=inference_batch_size,
-    )
-    if n_ensemble is not None:
-        base_clf.n_estimators = n_ensemble
+    n_estimators = n_ensemble if n_ensemble is not None else 8
+
+    if task_type == "cls":
+        base_clf = LoopICLClassifier(
+            model=model,
+            device=device,
+            dtype=dtype,
+            num_loops=num_loops,
+            mrl_dim=mrl_dim,
+            loop_residual_scaling_fn=loop_residual_scaling_fn,
+            exit_q=exit_q,
+            n_estimators=n_estimators,
+            batch_size=inference_batch_size,
+        )
+    else:
+        base_clf = LoopICLRegressor(
+            model=model,
+            device=device,
+            dtype=dtype,
+            num_loops=num_loops,
+            n_estimators=n_estimators,
+            batch_size=inference_batch_size,
+        )
     return Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", base_clf)])
 
 

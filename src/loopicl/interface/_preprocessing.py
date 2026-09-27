@@ -953,24 +953,22 @@ class EnsembleGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _has_prefill(wrapper) -> bool:
-    """Return True if the wrapped model supports prefill + predict_cached."""
-    try:
-        model = object.__getattribute__(wrapper, "_model")
-        return (
-            callable(getattr(model, "prefill", None))
-            and callable(getattr(model, "predict_cached", None))
-        )
-    except AttributeError:
-        return False
+def _has_prefill(model) -> bool:
+    """Return True if the model supports prefill + predict_cached."""
+    return (
+        callable(getattr(model, "prefill", None))
+        and callable(getattr(model, "predict_cached", None))
+    )
 
 
-def _wrapper_prefill(wrapper, batch_X_train_np: np.ndarray, batch_y_np: np.ndarray):
-    """Call model.prefill through the wrapper, handling numpy→tensor conversion.
+def _wrapper_prefill(model, device, dtype: str, batch_X_train_np: np.ndarray, batch_y_np: np.ndarray):
+    """Call model.prefill, handling numpy→tensor conversion.
 
     Parameters
     ----------
-    wrapper        : TransformerWrapper
+    model            : the LoopICL model
+    device           : torch device string
+    dtype            : "float32", "float16", or "bfloat16"
     batch_X_train_np : (B, N_train, C) float32 numpy array
     batch_y_np       : (B, N_train) float32 numpy array
 
@@ -980,15 +978,11 @@ def _wrapper_prefill(wrapper, batch_X_train_np: np.ndarray, batch_y_np: np.ndarr
     """
     import torch
 
-    model   = object.__getattribute__(wrapper, "_model")
-    device  = object.__getattribute__(wrapper, "_device")
-    dtype_s = object.__getattribute__(wrapper, "_dtype")
-
     X_t = torch.as_tensor(batch_X_train_np.astype(np.float32), device=device)
     y_t = torch.as_tensor(batch_y_np.astype(np.float32), device=device)
 
     _dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
-    amp_dtype  = _dtype_map.get(dtype_s)
+    amp_dtype  = _dtype_map.get(dtype)
 
     with torch.no_grad():
         if amp_dtype is not None and "cuda" in str(device):
@@ -997,12 +991,14 @@ def _wrapper_prefill(wrapper, batch_X_train_np: np.ndarray, batch_y_np: np.ndarr
         return model.prefill(X_t, y_t)
 
 
-def _wrapper_predict_cached(wrapper, batch_X_test_np: np.ndarray, cache) -> np.ndarray:
-    """Call model.predict_cached through the wrapper, returning a numpy array.
+def _wrapper_predict_cached(model, device, dtype: str, batch_X_test_np: np.ndarray, cache) -> np.ndarray:
+    """Call model.predict_cached, returning a numpy array.
 
     Parameters
     ----------
-    wrapper          : TransformerWrapper
+    model            : the LoopICL model
+    device           : torch device string
+    dtype            : "float32", "float16", or "bfloat16"
     batch_X_test_np  : (B, chunk, C) float32 numpy array
     cache            : cache object returned by _wrapper_prefill
 
@@ -1012,14 +1008,10 @@ def _wrapper_predict_cached(wrapper, batch_X_test_np: np.ndarray, cache) -> np.n
     """
     import torch
 
-    model   = object.__getattribute__(wrapper, "_model")
-    device  = object.__getattribute__(wrapper, "_device")
-    dtype_s = object.__getattribute__(wrapper, "_dtype")
-
     X_t = torch.as_tensor(batch_X_test_np.astype(np.float32), device=device)
 
     _dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
-    amp_dtype  = _dtype_map.get(dtype_s)
+    amp_dtype  = _dtype_map.get(dtype)
 
     with torch.no_grad():
         if amp_dtype is not None and "cuda" in str(device):
@@ -1042,11 +1034,3 @@ def _quantize_cache(cache):
     if hasattr(cache, "quantize") and callable(cache.quantize):
         return cache.quantize()
     return cache
-
-
-def _get_wrapper_device(wrapper):
-    """Return the device string from a wrapper's ``_device`` attribute."""
-    try:
-        return object.__getattribute__(wrapper, "_device")
-    except AttributeError:
-        return "cpu"

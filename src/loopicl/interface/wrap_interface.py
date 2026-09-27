@@ -1,34 +1,65 @@
-"""High-level interface wrapper built on top of TransformerWrapper.
+"""High-level interface wrapper for cross-model comparison experiments.
 
-``wrap_interface`` is the inverse of ``wrap_model``:
-
-- ``wrap_model(name)``                   → loads model → returns ``TransformerWrapper``
-- ``wrap_interface(name, model=wrapper)`` → loads interface class → replaces its
-  internal model with the provided ``TransformerWrapper`` → returns the interface
-
-This lets you keep the preprocessing, ensembling, and sklearn-compatible API of
-any supported interface while swapping the underlying transformer backbone.
+``wrap_interface`` loads an external interface (TabPFN, TabICL, LimiX) and
+replaces its internal model with a provided ``TransformerWrapper``, allowing
+you to use a different transformer backbone through that interface's
+preprocessing and ensembling pipeline.
 
 Example::
 
-    from loopicl.models.existing_models.transformer_wrapper import wrap_model
-    from loopicl.models.existing_models.interface_wrapper import wrap_interface
+    from loopicl.interface.wrap_interface import wrap_interface, TransformerWrapper
 
-    # tabpfn_v2 interface, powered by the tabicl transformer
-    clf = wrap_interface(
-        "tabpfn_v2",
-        task_type="cls",
-        model=wrap_model("tabicl", task_type="cls"),
-    )
+    # tabpfn_v2 interface powered by a custom TransformerWrapper subclass
+    clf = wrap_interface("tabpfn_v2", task_type="cls", model=my_wrapper)
     clf.fit(X_train, y_train)
     proba = clf.predict_proba(X_test)
 """
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
-from loopicl.interface.wrap_model import TransformerWrapper
+
+class TransformerWrapper:
+    """Base class for wrapping external transformer models (TabPFN, LimiX, etc.).
+
+    Provides a unified ``wrapper(X, y_train, eval_pos)`` interface —
+    numpy arrays in, logit tensor out — for models used in cross-model
+    comparison experiments.
+
+    Subclasses implement ``_forward(X_tensor, y_tensor, eval_pos)``.
+    """
+
+    def __init__(self, model, device, dtype: str = "float32"):
+        object.__setattr__(self, "_model", model)
+        object.__setattr__(self, "_device", device)
+        object.__setattr__(self, "_dtype", dtype)
+
+    def __call__(self, X: np.ndarray, y_train: np.ndarray, eval_pos: int) -> torch.Tensor:
+        device = object.__getattribute__(self, "_device")
+        X_np = np.asarray(X, dtype=np.float32)
+        y_np = np.asarray(y_train, dtype=np.float32)
+        X_t = torch.as_tensor(X_np, device=device)
+        y_t = torch.as_tensor(y_np, device=device)
+        dtype = object.__getattribute__(self, "_dtype")
+        _dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
+        amp_dtype = _dtype_map.get(dtype)
+        with torch.no_grad():
+            if amp_dtype is not None and "cuda" in str(device):
+                with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                    return self._forward(X_t, y_t, eval_pos)
+            return self._forward(X_t, y_t, eval_pos)
+
+    def _forward(self, X: torch.Tensor, y_train: torch.Tensor, eval_pos: int) -> torch.Tensor:
+        raise NotImplementedError
+
+    def __getattr__(self, name: str):
+        return getattr(object.__getattribute__(self, "_model"), name)
+
+    def __repr__(self) -> str:
+        model = object.__getattribute__(self, "_model")
+        return f"{type(self).__name__}({model!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -232,16 +263,6 @@ def wrap_interface(
 ):
     """Load a high-level interface and replace its model with a TransformerWrapper.
 
-    This is the inverse of ``wrap_model()``:
-
-    +--------------------+------------------------------+----------------------------------+
-    | function           | input                        | output                           |
-    +====================+==============================+==================================+
-    | ``wrap_model``     | model name                   | ``TransformerWrapper`` (callable)|
-    +--------------------+------------------------------+----------------------------------+
-    | ``wrap_interface`` | interface name + wrapper     | sklearn-style interface object   |
-    +--------------------+------------------------------+----------------------------------+
-
     Args:
         interface_name: Whose interface (preprocessing + API) to use.  One of:
                         ``"tabpfn_v2"``, ``"tabpfn_v2_5"``, ``"tabpfn_v2_6"``,
@@ -249,39 +270,21 @@ def wrap_interface(
                         ``"tabicl"``, ``"tabicl_v2"``, ``"tabicl_v1"``,
                         ``"tabicl_v1_1"``, ``"limix"``.
         task_type:      ``"cls"`` (classification) or ``"reg"`` (regression).
-        model:          A ``TransformerWrapper`` from ``wrap_model()`` — this is the
-                        transformer that will be used for inference instead of the
-                        interface's default model.
+        model:          A ``TransformerWrapper`` subclass instance — the transformer
+                        that will be used for inference instead of the interface's
+                        default model.
         **kwargs:       Extra keyword arguments forwarded to the estimator constructor
                         (e.g. ``device``, ``batch_size``).
 
     Returns:
         The interface object (e.g. ``TabPFNClassifier``) with its internal model
         replaced by the provided ``TransformerWrapper``.
-
-    Example::
-
-        from loopicl.models.existing_models.transformer_wrapper import wrap_model
-        from loopicl.models.existing_models.interface_wrapper import wrap_interface
-
-        clf = wrap_interface(
-            "tabpfn_v2",
-            task_type="cls",
-            model=wrap_model("tabicl", task_type="cls"),
-        )
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)
     """
     if model is None:
-        raise ValueError(
-            "model must be provided. Pass a TransformerWrapper from wrap_model(), e.g.:\n"
-            "    wrap_interface('tabpfn_v2', task_type='cls', "
-            "model=wrap_model('tabicl', task_type='cls'))"
-        )
+        raise ValueError("model must be a TransformerWrapper instance.")
     if not isinstance(model, TransformerWrapper):
         raise TypeError(
-            f"model must be a TransformerWrapper, got {type(model).__name__}. "
-            "Use wrap_model() to create one."
+            f"model must be a TransformerWrapper, got {type(model).__name__}."
         )
 
     key = interface_name.lower()
