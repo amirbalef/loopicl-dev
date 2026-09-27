@@ -1,6 +1,6 @@
-"""LoopICLEarlyExitV2 — LoopICL with a test-set-agnostic exit gate.
+"""LoopICLEarlyExit — LoopICL with a test-set-agnostic exit gate.
 
-Ported from ricotta/models/ricotta/model_early_exit_v2.py.
+Ported from loopicl/models/loopicl/model_early_exit.py.
 
 Design principles
 -----------------
@@ -37,7 +37,7 @@ from .conditioning import (
 )
 from .model import LoopICL, LoopICLConfig
 
-__all__ = ["EarlyExitGateV2", "LoopICLEarlyExitV2Config", "LoopICLEarlyExitV2"]
+__all__ = ["EarlyExitGate", "LoopICLEarlyExitConfig", "LoopICLEarlyExit"]
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ __all__ = ["EarlyExitGateV2", "LoopICLEarlyExitV2Config", "LoopICLEarlyExitV2"]
 # ---------------------------------------------------------------------------
 
 
-class EarlyExitGateV2(nn.Module):
+class EarlyExitGate(nn.Module):
     """Test-set-agnostic exit gate.
 
     Maps per-loop training-row CLS embeddings to a scalar exit probability
@@ -172,7 +172,7 @@ class EarlyExitGateV2(nn.Module):
 
 
 @dataclass
-class LoopICLEarlyExitV2Config(LoopICLConfig):
+class LoopICLEarlyExitConfig(LoopICLConfig):
     """LoopICLConfig plus v2 early-exit gate parameters."""
 
     exit_q:              float = 0.5
@@ -191,10 +191,10 @@ class LoopICLEarlyExitV2Config(LoopICLConfig):
 # ---------------------------------------------------------------------------
 
 
-class LoopICLEarlyExitV2(LoopICL):
+class LoopICLEarlyExit(LoopICL):
     """LoopICL with test-set-agnostic early-exit gate v2.
 
-    At each outer loop t an EarlyExitGateV2 produces λ_t from training-row
+    At each outer loop t an EarlyExitGate produces λ_t from training-row
     embeddings only.  At inference the decoder is called once, at the exit
     loop.  The gate module is named ``exit_gate`` so that the trainer can
     freeze all other parameters by checking ``name.startswith("exit_gate")``.
@@ -202,7 +202,7 @@ class LoopICLEarlyExitV2(LoopICL):
 
     def __init__(
         self,
-        config: LoopICLEarlyExitV2Config | None = None,
+        config: LoopICLEarlyExitConfig | None = None,
         **kwargs,
     ) -> None:
         # Merge config + extra kwargs
@@ -231,7 +231,7 @@ class LoopICLEarlyExitV2(LoopICL):
         self.per_sample_exit = self._init_per_sample_exit
 
         # Build exit gate using the resolved row-stream dim
-        self.exit_gate = EarlyExitGateV2(D=self._D, **gate_kwargs)
+        self.exit_gate = EarlyExitGate(D=self._D, **gate_kwargs)
 
         # Expose max_classes for the classifier's many-class check
         self.max_classes: int = self.cfg.max_num_classes

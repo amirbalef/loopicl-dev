@@ -172,21 +172,21 @@ def build_experiments(
     from models.tabicl_v2_model import TabICLv2Model
     from models.tabpfn_v3_model import TabPFNv3Model
     from models.iris_model import IrisModel
-    from models.ricotta_model import (
-        RicottaModel,
-        RicottaNormHistModel,
-        RicottaNormHistNoShiftModel,
-        RicottaNormHistChunkModel,
-        RicottaSandwichModel,
-        PairedColRicottaModel,
-        LabelPairedRicottaModel,
-        RicottaUnrolledModel,
-        QuadColRicottaModel,
-        TabFMEmbedRicottaModel,
-        FeatCircShiftRicottaModel,
-        RicottaEarlyExitModel,
+    from models.loopicl_model import (
+        LoopICLModel,
+        LoopICLNormHistModel,
+        LoopICLNormHistNoShiftModel,
+        LoopICLNormHistChunkModel,
+        LoopICLSandwichModel,
+        PairedColLoopICLModel,
+        LabelPairedLoopICLModel,
+        LoopICLUnrolledModel,
+        QuadColLoopICLModel,
+        TabFMEmbedLoopICLModel,
+        FeatCircShiftLoopICLModel,
+        LoopICLEarlyExitModel,
     )
-    from models.early_exit_model import EarlyExitIrisModel
+    from models.loopicl_ee_model import EarlyExitIrisModel
 
     _local_cls: dict[str, type] = {
         "Dummy":                  DummyModel,
@@ -194,18 +194,18 @@ def build_experiments(
         "TabPFN-v3":              TabPFNv3Model,
         "Iris":                   IrisModel,
         "IrisEE":                 EarlyExitIrisModel,
-        "LoopICL":                RicottaModel,
-        "RicottaNormHist":        RicottaNormHistModel,
-        "RicottaNormHistNoShift": RicottaNormHistNoShiftModel,
-        "RicottaNormHistChunk":   RicottaNormHistChunkModel,
-        "RicottaSandwich":        RicottaSandwichModel,
-        "PairedColRicotta":       PairedColRicottaModel,
-        "LabelPairedRicotta":     LabelPairedRicottaModel,
-        "RicottaUnrolled":        RicottaUnrolledModel,
-        "QuadColRicotta":         QuadColRicottaModel,
-        "TabFMEmbedRicotta":      TabFMEmbedRicottaModel,
-        "FeatCircShiftRicotta":   FeatCircShiftRicottaModel,
-        "LoopICLEarlyExit":       RicottaEarlyExitModel,
+        "LoopICL":                LoopICLModel,
+        "LoopICLNormHist":        LoopICLNormHistModel,
+        "LoopICLNormHistNoShift": LoopICLNormHistNoShiftModel,
+        "LoopICLNormHistChunk":   LoopICLNormHistChunkModel,
+        "LoopICLSandwich":        LoopICLSandwichModel,
+        "PairedColLoopICL":       PairedColLoopICLModel,
+        "LabelPairedLoopICL":     LabelPairedLoopICLModel,
+        "LoopICLUnrolled":        LoopICLUnrolledModel,
+        "QuadColLoopICL":         QuadColLoopICLModel,
+        "TabFMEmbedLoopICL":      TabFMEmbedLoopICLModel,
+        "FeatCircShiftLoopICL":   FeatCircShiftLoopICLModel,
+        "LoopICLEarlyExit":       LoopICLEarlyExitModel,
     }
 
     experiments = []

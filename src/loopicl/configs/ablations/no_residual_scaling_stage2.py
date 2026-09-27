@@ -1,4 +1,4 @@
-"""ricotta/base — standalone base config for the LoopICL model.
+"""loopicl/base — standalone base config for the LoopICL model.
 """
 
 from dataclasses import dataclass, field
@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 
 
-CHECKPOINT_DIR = "./results/workdir/ricotta_cls/ricotta_one_layer_v1_no_scaling/checkpoint/dir"
+CHECKPOINT_DIR = "./results/workdir/loopicl_cls/no_residual_scaling/checkpoint/dir"
 CHECKPOINT_NAME = "step-100000.ckpt"  # or "step-50000.ckpt" for a specific step
 
 
@@ -18,7 +18,7 @@ class GeneralConfig:
     name: str = "loopicl"
     variant: str = "model"
     class_name: str = "LoopICL"
-    exp_name: str = "ricotta_no_scaling_ablation_stage2"
+    exp_name: str = "no_residual_scaling_stage2"
     weights_path: Optional[str] = None
     pretrained_weights_path: str = f"{CHECKPOINT_DIR}/{CHECKPOINT_NAME}"
 
@@ -155,7 +155,7 @@ class TrainingConfig:
 # -----------------------
 @dataclass
 class PriorConfig:
-    prior_source: str = "ricotta"
+    prior_source: str = "loopicl"
     prior_type: str = "graph_scm_default"
     prior_device: str = "cpu"
 
@@ -220,8 +220,8 @@ class CheckpointConfig:
 @dataclass
 class BenchmarkValidatorConfig:
     benchmark: str = ""
-    benchmark_dir: str = "./results/ricotta_exp_benchmarks/"
-    candidate_name: str = "ricotta_benchmarks"
+    benchmark_dir: str = "./results/loopicl_exp_benchmarks/"
+    candidate_name: str = "loopicl_benchmarks"
     baseline_models: List[str] = field(
         default_factory=lambda: ["tabpfn_v3", "tabpfn_v3-def", "tabpfn_v2_6", "tabpfn_v2_5", "tabpfn_v2", "tabicl_v2", "tabicl_v2-def", "tabicl_v1_1", "tabicl_v1", "tabfm", "tabfm-def", "random_forest"]
     )
@@ -284,7 +284,7 @@ class WandbConfig:
     project: str = "RICOTTA_EXP"
     name: Optional[str] = None
     id: Optional[str] = None
-    dir: Optional[str] = "./results/wandb/ricotta_exp/"
+    dir: Optional[str] = "./results/wandb/loopicl_exp/"
     new_run: bool = False
     mode: str = "online"
 
@@ -305,9 +305,9 @@ class Config:
     def __post_init__(self):
         n = self.general.exp_name
         if self.checkpoint.dir is None:
-            self.checkpoint.dir = f"./results/workdir/ricotta_exp/{n}/checkpoint/dir"
+            self.checkpoint.dir = f"./results/workdir/loopicl_exp/{n}/checkpoint/dir"
         if self.validation.save_dir is None:
-            self.validation.save_dir = f"./results/workdir/ricotta_exp/{n}/validation/"
+            self.validation.save_dir = f"./results/workdir/loopicl_exp/{n}/validation/"
         if self.wandb.name is None:
             self.wandb.name = n
         for b in self.validation.benchmarks:

@@ -8,7 +8,7 @@ Key differences from previous early-exit configs
   from test predictions.  At inference the decoder is called exactly once
   (at the exit loop), not at every loop iteration.
 * Task-agnostic: set prior_tasktype = "regression" and
-  class_name = "LoopICLEarlyExitV2" to run on regression priors.
+  class_name = "LoopICLEarlyExit" to run on regression priors.
 * Uses EarlyExitTrainerV2 which dispatches step losses by task type
   (cross-entropy for classification, pinball for regression).
 
@@ -34,7 +34,7 @@ from typing import List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 _STAGE2_CKPT = (
-    "./results/workdir/ricotta_exp/one_layer_no_scaling_stage2/checkpoint/dir/step-30000.ckpt"
+    "./results/workdir/loopicl_exp/loopicl_stage2/checkpoint/dir/step-30000.ckpt"
 )
 
 
@@ -45,8 +45,8 @@ _STAGE2_CKPT = (
 @dataclass
 class GeneralConfig:
     name:                   str           = "loopicl"
-    variant:                str           = "model_early_exit_v2"
-    class_name:             str           = "LoopICLEarlyExitV2"
+    variant:                str           = "model_early_exit"
+    class_name:             str           = "LoopICLEarlyExit"
     exp_name:               str           = "loopicl_ee_v2_cls"
     weights_path:           Optional[str] = None
     pretrained_weights_path: str          = _STAGE2_CKPT
@@ -130,7 +130,7 @@ class ModelConfig:
     disc_hist_chunk_size:     int  = 2048
 
     # ---------------------------------------------------------------------------
-    # Gate hyperparameters (EarlyExitGateV2 — test-set agnostic)
+    # Gate hyperparameters (EarlyExitGate — test-set agnostic)
     # ---------------------------------------------------------------------------
 
     # Per-row MLP: D → hidden → compress_dim, mean-pooled → (B, compress_dim).

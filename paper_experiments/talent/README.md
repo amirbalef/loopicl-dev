@@ -31,19 +31,13 @@ cp -r /path/to/talent/datasets ../results/benchmarks/datasets/talent/datasets-ta
 
 ```bash
 # Quick smoke-test (3 datasets, 1 seed)
-uv run benchmark_eval/talent/run_benchmark_talent.py --dataset quick
+uv run benchmark_eval/talent/run_benchmark_talent.py --dataset talent-lite
 
 # talent-lite suite with specific models
 uv run benchmark_eval/talent/run_benchmark_talent.py --dataset talent-lite --models LightGBM,CatBoost
 
 # Full TALENT suite (5 seeds)
 uv run benchmark_eval/talent/run_benchmark_talent.py --dataset talent
-
-# Specific datasets and models
-uv run benchmark_eval/talent/run_benchmark_talent.py --datasets jasmine,adult --models TabICLv2,TabPFNv2
-
-# Multiple seeds
-uv run benchmark_eval/talent/run_benchmark_talent.py --dataset talent-lite --seed-num 5
 
 # Custom TALENT data folder
 uv run benchmark_eval/talent/run_benchmark_talent.py --talent-folder /path/to/talent/data

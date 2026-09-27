@@ -219,4 +219,11 @@ __marimo__/
 
 .claude/
 
-results/
+
+results/*
+!results/weights/
+results/weights/*
+!results/weights/loopicl-cls-ee-step-4000.ckpt
+!results/weights/loopicl-cls-stage2-step-30000.ckpt
+
+

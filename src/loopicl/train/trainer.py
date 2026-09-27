@@ -357,7 +357,7 @@ class Trainer:
                     device=self.config.prior.prior_device,
                     prefetch_batches=getattr(self.config.prior, "prefetch_batches", 2),
                 )
-            elif prior_source == "ricotta":
+            elif prior_source == "loopicl":
                 dataset = LoopICLPriorDataset(
                     batch_size=self.config.training.batch_size,
                     batch_size_per_gp=self.config.prior.batch_size_per_gp,
@@ -422,7 +422,7 @@ class Trainer:
                     n_jobs=self.config.prior.n_jobs,
                 )
         else:
-            if prior_source == "ricotta" and getattr(self.config.prior, "prior_type", "") == "graph_scm_soft_v2":
+            if prior_source == "loopicl" and getattr(self.config.prior, "prior_type", "") == "graph_scm_soft_v2":
                 dataset = LoopICLLoadPriorDatasetSoftV2(
                     data_dir=self.config.prior.prior_dir,
                     batch_size=self.config.training.batch_size,
@@ -434,7 +434,7 @@ class Trainer:
                     device=self.config.prior.prior_device,
                     timeout=getattr(self.config.prior, "timeout", 30),
                 )
-            elif prior_source == "ricotta" and getattr(self.config.prior, "prior_type", "") == "graph_scm_dual":
+            elif prior_source == "loopicl" and getattr(self.config.prior, "prior_type", "") == "graph_scm_dual":
                 dataset = LoopICLLoadPriorDatasetDual(
                     data_dir=self.config.prior.prior_dir,
                     batch_size=self.config.training.batch_size,
@@ -446,7 +446,7 @@ class Trainer:
                     device=self.config.prior.prior_device,
                     timeout=getattr(self.config.prior, "timeout", 30),
                 )
-            elif prior_source == "ricotta":
+            elif prior_source == "loopicl":
                 dataset = LoopICLLoadPriorDataset(
                     data_dir=self.config.prior.prior_dir,
                     batch_size=self.config.training.batch_size,
@@ -458,7 +458,7 @@ class Trainer:
                     device=self.config.prior.prior_device,
                     timeout=getattr(self.config.prior, "timeout", 30),
                 )
-            elif prior_source == "ricotta_graph_scm":
+            elif prior_source == "loopicl_graph_scm":
                 dataset = LoopICLLoadPriorDataset(
                     data_dir=self.config.prior.prior_dir,
                     batch_size=self.config.training.batch_size,
@@ -527,7 +527,7 @@ class Trainer:
             return
 
         import os
-        from loopicl.models.ricotta_ablation.bar_distribution import BarDistribution
+        from loopicl.models.loopicl_ablation.bar_distribution import BarDistribution
 
         edges_path = os.path.join(self.config.checkpoint.dir, "global_edges.pt")
         n_edge_batches = getattr(self.config.prior, "n_edge_batches", 100)
@@ -1565,7 +1565,7 @@ class Trainer:
                         loss = final_loss
                     final_pred = pred[-1]
                 elif is_regression:
-                    from loopicl.models.ricotta_ablation.bar_distribution import BarDistribution
+                    from loopicl.models.loopicl_ablation.bar_distribution import BarDistribution
                     _bar = BarDistribution(num_bars=pred[-1].shape[-1])
                     _edges = self.raw_model.fixed_edges.expand(pred[-1].shape[1], -1)  # (B, num_bars+1)
                     _y_test_idx = _bar.to_indices(y_test.float(), _edges)              # (B, M)
@@ -1603,7 +1603,7 @@ class Trainer:
                     errors = y_test.float().T.unsqueeze(-1) - pred
                     loss = torch.maximum(alphas * errors, (alphas - 1) * errors).mean()
                 elif is_regression:
-                    from loopicl.models.ricotta_ablation.bar_distribution import BarDistribution
+                    from loopicl.models.loopicl_ablation.bar_distribution import BarDistribution
                     _bar = BarDistribution(num_bars=pred.shape[-1])
                     _edges = self.raw_model.fixed_edges.expand(pred.shape[1], -1)  # (B, num_bars+1)
                     _y_test_idx = _bar.to_indices(y_test.float(), _edges)          # (B, M)
@@ -1681,7 +1681,7 @@ def _validate_micro_batch(micro_seq_len, micro_train_size):
     because seq_len = train_size + test_size, so only test rows beyond the minimum
     are dropped from longer samples — no train rows are lost.  Likewise, the minimum
     train_size is used so extra train rows become additional test rows, consistent
-    with the ricotta_graph_scm loading adapter.
+    with the loopicl_graph_scm loading adapter.
     """
     return micro_seq_len.min().item(), micro_train_size.min().item()
 

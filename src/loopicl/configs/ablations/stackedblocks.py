@@ -1,4 +1,4 @@
-"""ricotta/unrolled — unrolled version of one_layer.
+"""loopicl/unrolled — unrolled version of one_layer.
 
 Based on one_layer.py (LoopICL, one axial block looped 6 times).
 
@@ -25,7 +25,7 @@ class GeneralConfig:
     name: str = "loopicl"
     variant: str = "model"
     class_name: str = "LoopICLUnrolled"
-    exp_name: str = "ricotta_one_layer_unrolled"
+    exp_name: str = "stackedblocks"
     weights_path: Optional[str] = None
     pretrained_weights_path: Optional[str] = None
 
@@ -121,7 +121,7 @@ class TrainingConfig:
     np_seed: int = 42
     torch_seed: int = 42
 
-    max_steps: int = 500_000
+    max_steps: int = 100_000
     batch_size: int = 64
     micro_batch_size: int = 4
     optimizer: str = "tabicl_muon"
@@ -133,7 +133,7 @@ class TrainingConfig:
     muon_adamw_betas: Tuple[float, float] = (0.9, 0.95)
     muon_cautious_wd: bool = True
     scheduler: str = "wsd"
-    wsd_decay_fraction: float = 0.1   # fraction of max_steps used for the decay phase
+    wsd_decay_fraction: float = 0.0   # fraction of max_steps used for the decay phase
     wsd_lr_end: float = 0.0           # lr at end of decay
     wsd_decay_type: str = "cosine"    # "cosine" or "linear"
     warmup_proportion: float = 0.01
@@ -198,8 +198,8 @@ class CheckpointConfig:
 @dataclass
 class BenchmarkValidatorConfig:
     benchmark: str = ""
-    benchmark_dir: str = "./results/ricotta_cls_benchmarks/"
-    candidate_name: str = "ricotta_benchmarks"
+    benchmark_dir: str = "./results/loopicl_cls_benchmarks/"
+    candidate_name: str = "loopicl_benchmarks"
     baseline_models: List[str] = field(
         default_factory=lambda: ["tabpfn_v3", "tabpfn_v3-def", "tabpfn_v2_6", "tabpfn_v2_5", "tabpfn_v2", "tabicl_v2", "tabicl_v2-def", "tabicl_v1_1", "tabicl_v1", "tabfm", "tabfm-def", "random_forest"]
     )
@@ -256,7 +256,7 @@ class WandbConfig:
     project: str = "RICOTTA_CLS"
     name: Optional[str] = None
     id: Optional[str] = None
-    dir: Optional[str] = "./results/wandb/ricotta_cls/"
+    dir: Optional[str] = "./results/wandb/loopicl_cls/"
     new_run: bool = False
     mode: str = "online"
 
@@ -277,9 +277,9 @@ class Config:
     def __post_init__(self):
         n = self.general.exp_name
         if self.checkpoint.dir is None:
-            self.checkpoint.dir = f"./results/workdir/ricotta_cls/{n}/checkpoint/dir"
+            self.checkpoint.dir = f"./results/workdir/loopicl_cls/{n}/checkpoint/dir"
         if self.validation.save_dir is None:
-            self.validation.save_dir = f"./results/workdir/ricotta_cls/{n}/validation/"
+            self.validation.save_dir = f"./results/workdir/loopicl_cls/{n}/validation/"
         if self.wandb.name is None:
             self.wandb.name = n
         for b in self.validation.benchmarks:

@@ -479,7 +479,7 @@ def _compute_lyapunov_spectrum_per_block(
 ) -> dict[str, np.ndarray]:
     """Estimate leading Lyapunov exponents using per-block stepping.
 
-    Designed for unrolled models (e.g. RicottaUnrolled) where
+    Designed for unrolled models (e.g. LoopICLUnrolled) where
     ``axial_num_blocks > 1`` and ``num_icl_loops=1``.  Each axial block is
     treated as one Benettin step rather than one full ICL loop, yielding
     ``n_blocks`` steps through the depth of the network.  This is directly

@@ -1,4 +1,4 @@
-"""ricotta/base — standalone base config for the LoopICL model.
+"""loopicl/base — standalone base config for the LoopICL model.
 """
 
 from dataclasses import dataclass, field
@@ -13,7 +13,7 @@ class GeneralConfig:
     name: str = "loopicl"
     variant: str = "model"
     class_name: str = "LoopICL"
-    exp_name: str = "ricotta_one_layer_v1_no_scaling"
+    exp_name: str = "loopicl_stage1"
     weights_path: Optional[str] = None
     pretrained_weights_path: Optional[str] = None
 
@@ -187,8 +187,8 @@ class CheckpointConfig:
 @dataclass
 class BenchmarkValidatorConfig:
     benchmark: str = ""
-    benchmark_dir: str = "./results/ricotta_cls_benchmarks/"
-    candidate_name: str = "ricotta_benchmarks"
+    benchmark_dir: str = "./results/loopicl_cls_benchmarks/"
+    candidate_name: str = "loopicl_benchmarks"
     baseline_models: List[str] = field(
         default_factory=lambda: ["tabpfn_v3", "tabpfn_v3-def", "tabpfn_v2_6", "tabpfn_v2_5", "tabpfn_v2", "tabicl_v2", "tabicl_v2-def", "tabicl_v1_1", "tabicl_v1", "tabfm", "tabfm-def", "random_forest"]
     )
@@ -249,7 +249,7 @@ class WandbConfig:
     project: str = "RICOTTA_CLS"
     name: Optional[str] = None
     id: Optional[str] = None
-    dir: Optional[str] = "./results/wandb/ricotta_cls/"
+    dir: Optional[str] = "./results/wandb/loopicl_cls/"
     new_run: bool = False
     mode: str = "online"
 
@@ -270,9 +270,9 @@ class Config:
     def __post_init__(self):
         n = self.general.exp_name
         if self.checkpoint.dir is None:
-            self.checkpoint.dir = f"./results/workdir/ricotta_cls/{n}/checkpoint/dir"
+            self.checkpoint.dir = f"./results/workdir/loopicl_cls/{n}/checkpoint/dir"
         if self.validation.save_dir is None:
-            self.validation.save_dir = f"./results/workdir/ricotta_cls/{n}/validation/"
+            self.validation.save_dir = f"./results/workdir/loopicl_cls/{n}/validation/"
         if self.wandb.name is None:
             self.wandb.name = n
         for b in self.validation.benchmarks:

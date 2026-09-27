@@ -1,15 +1,5 @@
-"""All ricotta ablation models evaluation config — one entry per (model, checkpoint step).
-
-Contains every model variant from src/ricotta/configs/ricotta/,
-evaluated at each permanent checkpoint (every 5 000 steps up to 100 000).
-
-Run with:
-    python benchmark_eval/openml/run_benchmark.py --dataset dev-cls-lite --config ablations.ricotta_ablation_resample
-
-"""
-
-CHECKPOINT_DIR_ABLATION =  "../TICLA/results/workdir/ricotta_cls/"
-CHECKPOINT_DIR_STAGE2   =  "../TICLA/results/workdir/ricotta_exp/"
+CHECKPOINT_DIR_ABLATION = "please_replace_with_actual_path"
+CHECKPOINT_DIR_STAGE2   =  "please_replace_with_actual_path"
 CHECKPOINT_NAME         =  "step-10000.ckpt"
 
 CHECKPOINT_STEP = 100_000
@@ -21,10 +11,10 @@ num_loops = 6
 _BASE = {
     "save_mode":            "single_file",
     "num_loops":            num_loops,
-    "interface":            "ricotta",
+    "interface":            "loopicl",
     "batch_size":           1,
     "n_estimators":         1,
-    "multiclass_strategy":  "tabpfn",
+    "multiclass_strategy":  "prob_avg",
     "subsample_samples": None,
     # "max_features":     100,
     "test_chunk_size":  None,
@@ -41,22 +31,22 @@ _MODELS = [
     # # ------------------------------------------------------------------ #
     # # Base models                                                          #
     # # ------------------------------------------------------------------ #
-    #("ricotta_base_v1",                "LoopICL",        _abl("ricotta_base_v1"),                None),
-    ("ricotta_one_layer_v1",           "LoopICL",        _abl("ricotta_one_layer_v1"),           None),
-    ("ricotta_one_layer_v1_no_scaling","LoopICL",        _abl("ricotta_one_layer_v1_no_scaling"),None),
-    ("ricotta_one_layer_light_scaling","LoopICL",        _abl("ricotta_one_layer_light_scaling"),None),
-    #("ricotta_adaptive_scaling_no_fe","LoopICL",        _abl("ricotta_adaptive_scaling_no_fe"),None, {"loop_residual_scaling_fn": "inv_n"}),
+    #("loopicl_base_v1",                "LoopICL",        _abl("loopicl_base_v1"),                None),
+    ("residual_scaling_one_over_L",           "LoopICL",        _abl("residual_scaling_one_over_L"),           None),
+    ("no_residual_scaling","LoopICL",        _abl("no_residual_scaling"),None),
+    ("residual_scaling_one_over_sqrt_L","LoopICL",        _abl("residual_scaling_one_over_sqrt_L"),None),
+    #("no_dist_cond","LoopICL",        _abl("no_dist_cond"),None, {"loop_residual_scaling_fn": "inv_n"}),
     # # ------------------------------------------------------------------ #
-    ("ricotta_one_layer_unrolled",     "RicottaUnrolled",        _abl("ricotta_one_layer_unrolled"),   None, {"num_loops": 1}),
+    ("stackedblocks",     "LoopICLUnrolled",        _abl("stackedblocks"),   None, {"num_loops": 1}),
     # # # ------------------------------------------------------------------ #
 ]
 
 # (name, model_class, overrides) — evaluated at full (no subsampling) only, step-10000
 _MODELS_FULL_ONLY = [
-    ("ricotta_one_layer_ablation_stage2",    "LoopICL",        {}),
-    ("ricotta_no_scaling_ablation_stage2",   "LoopICL",        {}),
-    ("ricotta_light_scaling_ablation_stage2","LoopICL",        {}),
-    ("ricotta_unrolled_ablation_stage2",     "RicottaUnrolled",{"num_loops": 1}),
+    ("residual_scaling_one_over_L_stage2",    "LoopICL",        {}),
+    ("no_residual_scaling_stage2",            "LoopICL",        {}),
+    ("residual_scaling_one_over_sqrt_L_stage2","LoopICL",      {}),
+    ("stackedblocks_stage2",                  "LoopICLUnrolled",{"num_loops": 1}),
 ]
 
 

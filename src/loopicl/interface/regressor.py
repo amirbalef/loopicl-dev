@@ -1,7 +1,7 @@
 """Sklearn-compatible regressor interface for the LoopICL tabular foundation model.
 
 Uses a quantile / pinball decoder:
-  - Model: ``LoopICLTabICLReg`` — outputs ``(B, n_test, num_quantiles)`` raw quantile values
+  - Model: ``LoopICLReg`` — outputs ``(B, n_test, num_quantiles)`` raw quantile values
   - Ensemble: inverse-transform per-estimator quantiles to z-norm space → average
   - Decode: ``QuantileDistribution.{mean,variance,...}`` with tail extrapolation
 
@@ -57,7 +57,7 @@ OutputType = Literal["mean", "median", "std", "quantiles", "main", "full"]
 
 
 class LoopICLRegressor(RegressorMixin, BaseEstimator):
-    """Sklearn-compatible regressor wrapping ``LoopICLTabICLReg`` (quantile / pinball decoder).
+    """Sklearn-compatible regressor wrapping ``LoopICLReg`` (quantile / pinball decoder).
 
     Works with models that output raw quantile predictions directly
     (``num_quantiles`` evenly-spaced quantile values, trained with pinball loss).
@@ -74,7 +74,7 @@ class LoopICLRegressor(RegressorMixin, BaseEstimator):
 
     Parameters
     ----------
-    model : LoopICLTabICLReg
+    model : LoopICLReg
         The regression model.
     n_estimators : int, default=8
     norm_methods : list[str] or None

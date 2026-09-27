@@ -98,7 +98,7 @@ def build_experiments(
     from models.dummy_model import DummyModel
     from models.tabicl_v2_model import TabICLv2Model, TabICL2reg
     from models.tabpfn_v3_model import TabPFNv3Model
-    from models.ricotta_model import RicottaModel, LoopICLEarlyExitV2Model
+    from models.loopicl_model import LoopICLModel, LoopICLEarlyExitModel
 
     method_kwargs = {"fit_kwargs": {"refit_on_val": True}}
 
@@ -107,8 +107,8 @@ def build_experiments(
         "TabICL-v2":           (TabICLv2Model,            {}),
         "TabICL2reg":          (TabICL2reg,               {}),
         "TabPFN-v3":           (TabPFNv3Model,            {}),
-        "LoopICL":             (RicottaModel,             {}),
-        "LoopICLEarlyExitV2": (LoopICLEarlyExitV2Model, {}),
+        "LoopICL":             (LoopICLModel,             {}),
+        "LoopICLEarlyExit": (LoopICLEarlyExitModel, {}),
     }
 
     experiments = []  # list of (AGModelExperiment, save_dir | None)

@@ -22,8 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-# Reuse shared helpers from ricotta_runner to keep metrics consistent.
-from benchmark_eval.talent.models.ricotta_runner import (
+# Reuse shared helpers from loopicl_runner to keep metrics consistent.
+from benchmark_eval.talent.models.loopicl_runner import (
     _TalentDataConverter,
     _build_y_info,
     _compute_metrics,

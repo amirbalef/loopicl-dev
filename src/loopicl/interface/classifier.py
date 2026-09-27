@@ -2,15 +2,15 @@
 
 Ensemble strategy
 -----------------
-Binary classification  : TabPFN v3-style
+Binary classification  : probability averaging
   - balanced class permutations ([0,1]/[1,0] balanced across estimators)
   - richer normalization variants: ["none", "power", "quantile", "robust"]
   - optional stratified row subsampling per estimator
   - softmax per estimator → average probabilities
 
 Multiclass classification: configurable via ``multiclass_strategy``
-  - "tabicl" (default): circular class-shift permutations, accumulate raw logits → single softmax
-  - "tabpfn": balanced class permutations, softmax per estimator → average probabilities
+  - "logit_avg" (default): circular class-shift permutations, accumulate raw logits → single softmax
+  - "prob_avg": balanced class permutations, softmax per estimator → average probabilities
 
 Both strategies apply the class permutation to y_train before each forward
 pass and apply the same permutation to un-shuffle the output logits before
@@ -110,11 +110,11 @@ def _make_digit_map(n_classes: int, bases: list) -> np.ndarray:
 # Defaults
 # ---------------------------------------------------------------------------
 
-# Binary defaults (TabPFN v3-style)
+# Binary defaults (probability averaging)
 _BINARY_NORM_METHODS = ["none", "power", "quantile", "robust"]
 _BINARY_CLASS_SHUFFLE = "balanced_shuffle"
 
-# Multiclass defaults (TabICL-style)
+# Multiclass defaults (logit averaging)
 _MULTI_NORM_METHODS = ["none", "power"]
 _MULTI_CLASS_SHUFFLE = "shift"
 
@@ -129,8 +129,8 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
 
     Binary vs. multiclass behaviour is selected automatically at ``fit`` time.
 
-    Binary (TabPFN v3-style)
-    ~~~~~~~~~~~~~~~~~~~~~~~~
+    Binary
+    ~~~~~~
     - Class permutations: ``balanced_shuffle`` — all unique permutations
       ([0,1] and [1,0]) distributed evenly across estimators.
     - Normalization: ``["none", "power", "quantile", "robust"]``.
@@ -140,9 +140,9 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
     ~~~~~~~~~~
     Controlled by ``multiclass_strategy``:
 
-    - ``"tabicl"`` *(default)*: ``shift`` class permutations, ``["none", "power"]``
+    - ``"logit_avg"`` *(default)*: ``shift`` class permutations, ``["none", "power"]``
       normalization, accumulate raw logits → single softmax.
-    - ``"tabpfn"``: ``balanced_shuffle`` class permutations,
+    - ``"prob_avg"``: ``balanced_shuffle`` class permutations,
       ``["none", "power", "quantile", "robust"]`` normalization,
       softmax per estimator → average probabilities.
 
@@ -225,16 +225,16 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         too large to fit in GPU memory. ``None`` (default) uses all rows.
     max_features : int or None, default=None
         If set, each estimator randomly draws this many features (without
-        replacement) from the full feature set (TabFM style). Different
+        replacement) from the full feature set. Different
         estimators draw different subsets; averaging over the ensemble recovers
         coverage of all features. Useful for high-dimensional datasets that
         exceed GPU memory due to column-attention cost. ``None`` uses all features.
-    multiclass_strategy : str, default="tabicl"
-        Aggregation strategy for multiclass problems. ``"tabicl"`` accumulates
-        raw logits and applies a single softmax at the end (TabICL-style).
-        ``"tabpfn"`` applies softmax per estimator and averages probabilities
-        (TabPFN v3-style), and also switches to ``balanced_shuffle`` class
-        permutations and the richer normalization set used for binary.
+    multiclass_strategy : str, default="logit_avg"
+        Aggregation strategy for multiclass problems. ``"logit_avg"`` accumulates
+        raw logits and applies a single softmax at the end.
+        ``"prob_avg"`` applies softmax per estimator and averages probabilities,
+        and also switches to ``balanced_shuffle`` class permutations and the
+        richer normalization set used for binary.
         Ignored for binary classification.
     random_state : int or None, default=42
         Seed for reproducible ensemble generation.
@@ -273,7 +273,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         keep_cache_on_cpu: bool = False,
         subsample_samples: Optional[int] = None,
         max_features: Optional[int] = None,
-        multiclass_strategy: str = "tabpfn",
+        multiclass_strategy: str = "prob_avg",
         random_state: Optional[int] = 42,
     ):
         if model is None:
@@ -318,13 +318,13 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
 
         # Detect early-exit checkpoint by presence of gate config keys
         if "gate_delta_out_dim" in cfg:
-            from loopicl.models.loopicl.model_early_exit_v2 import (
-                LoopICLEarlyExitV2,
-                LoopICLEarlyExitV2Config,
+            from loopicl.models.loopicl.model_early_exit import (
+                LoopICLEarlyExit,
+                LoopICLEarlyExitConfig,
             )
-            valid = set(LoopICLEarlyExitV2Config.__dataclass_fields__)
+            valid = set(LoopICLEarlyExitConfig.__dataclass_fields__)
             cfg = {k: v for k, v in cfg.items() if k in valid}
-            model = LoopICLEarlyExitV2(**cfg)
+            model = LoopICLEarlyExit(**cfg)
         else:
             from loopicl.models.loopicl.model import LoopICL, LoopICLConfig
             valid = {f.name for f in dataclasses.fields(LoopICLConfig)}
@@ -421,7 +421,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         self._n_train = X_enc.shape[0]
 
         # Many-class support: if n_classes exceeds the model's capacity, use
-        # mixed-radix decomposition (similar to TabICL's approach).
+        # mixed-radix decomposition.
         _max_classes = getattr(self.model, "max_classes", None)
         if _max_classes is not None and self.n_classes_ > _max_classes:
             self._mr_bases = _compute_mr_bases(self.n_classes_, _max_classes)
@@ -431,17 +431,17 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
             self._mr_digit_map = None
 
         is_binary = self.n_classes_ == 2
-        use_tabpfn_style = is_binary or self.multiclass_strategy == "tabpfn"
+        use_prob_avg = is_binary or self.multiclass_strategy == "prob_avg"
 
         # Resolve norm_methods and class_shuffle_method
         norm_methods = self.norm_methods
         class_shuffle_method = self.class_shuffle_method
 
         if norm_methods is None:
-            norm_methods = _BINARY_NORM_METHODS if use_tabpfn_style else _MULTI_NORM_METHODS
+            norm_methods = _BINARY_NORM_METHODS if use_prob_avg else _MULTI_NORM_METHODS
 
         if class_shuffle_method is None:
-            class_shuffle_method = _BINARY_CLASS_SHUFFLE if use_tabpfn_style else _MULTI_CLASS_SHUFFLE
+            class_shuffle_method = _BINARY_CLASS_SHUFFLE if use_prob_avg else _MULTI_CLASS_SHUFFLE
 
         # cache_context requires fingerprint=False: fingerprint depends on the
         # test set (via salt = n_total_rows * n_features) and cannot be
@@ -536,7 +536,7 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         n_test = X_enc.shape[0]
         n_train = self.ensemble_generator_.effective_n_train_
         is_binary = self.n_classes_ == 2
-        use_tabpfn_style = is_binary or self.multiclass_strategy == "tabpfn"
+        use_prob_avg = is_binary or self.multiclass_strategy == "prob_avg"
 
         ensemble_data = self.ensemble_generator_.transform(X_enc)
 
@@ -628,18 +628,18 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
                     # out[..., perm] maps slot k → original class position perm[k].
                     out = logits[i][..., perm]  # (chunk, n_classes)
 
-                    if use_tabpfn_style:
-                        # TabPFN v3-style: softmax per estimator, average probabilities
+                    if use_prob_avg:
+                        # Probability averaging: softmax per estimator, average probabilities
                         accumulated[t_start:t_end] += _softmax(
                             out, temperature=self.softmax_temperature
                         )
                     else:
-                        # TabICL-style: accumulate raw logits, softmax at the end
+                        # Logit averaging: accumulate raw logits, softmax at the end
                         accumulated[t_start:t_end] += out
 
         accumulated /= n_estimators
 
-        if not use_tabpfn_style:
+        if not use_prob_avg:
             accumulated = _softmax(accumulated, temperature=self.softmax_temperature)
 
         # Normalize in float64 to avoid float32 precision drift that causes
@@ -664,8 +664,8 @@ class LoopICLClassifier(ClassifierMixin, BaseEstimator):
         Final class probabilities are obtained by multiplying per-digit probs:
             P(class c) ∝ ∏_d P(digit_d = digit_map[c, d])
 
-        This mirrors TabICL's mixed-radix ensembling strategy but applied at
-        the interface level rather than inside the model.
+        Uses a mixed-radix decomposition applied at the interface level rather
+        than inside the model.
         """
         import torch
 

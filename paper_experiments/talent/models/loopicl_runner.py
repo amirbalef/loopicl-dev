@@ -1,7 +1,7 @@
 """LoopICL runner for the TALENT benchmark.
 
 Bridges the TALENT (N, C, y) data format to the LoopICLClassifier /
-RicottaRegressor sklearn interface and returns a TALENT-compatible RunResult.
+LoopICLRegressor sklearn interface and returns a TALENT-compatible RunResult.
 
 Evaluation protocol (matches TALENT's ICL evaluation):
   1. Fit data converter on the train split only (ordinal encoding, NaN imputation).
@@ -38,7 +38,7 @@ from sklearn.preprocessing import OrdinalEncoder
 # Checkpoint loader
 # ---------------------------------------------------------------------------
 
-def _load_ricotta_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+def _load_loopicl_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
     """Load a LoopICL classification checkpoint.
 
     Loads to CPU first (avoids 2× VRAM spike), then moves to device.
@@ -64,7 +64,7 @@ def _load_ricotta_model(weights_path: str, device: str = "cpu") -> torch.nn.Modu
     return model
 
 
-def _load_ricotta_early_exit_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+def _load_loopicl_early_exit_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
     """Load a LoopICLEarlyExit checkpoint (from TICLA).
 
     Loads to CPU first (avoids 2× VRAM spike), then moves to device.
@@ -89,8 +89,8 @@ def _load_ricotta_early_exit_model(weights_path: str, device: str = "cpu") -> to
     return model
 
 
-def _load_ricotta_early_exit_v2_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
-    """Load a LoopICLEarlyExitV2 checkpoint.
+def _load_loopicl_early_exit_v2_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+    """Load a LoopICLEarlyExit checkpoint.
 
     Loads to CPU first (avoids 2× VRAM spike), then moves to device.
     Prefers EMA weights when available.
@@ -98,19 +98,19 @@ def _load_ricotta_early_exit_v2_model(weights_path: str, device: str = "cpu") ->
     import os
     if not os.path.isfile(weights_path):
         raise FileNotFoundError(
-            f"LoopICLEarlyExitV2 checkpoint not found: {weights_path!r}\n"
+            f"LoopICLEarlyExit checkpoint not found: {weights_path!r}\n"
             "Update 'weights_path' in your config file to point at a valid .ckpt file."
         )
 
-    from loopicl.models.loopicl.model_early_exit_v2 import LoopICLEarlyExitV2, LoopICLEarlyExitV2Config
+    from loopicl.models.loopicl.model_early_exit import LoopICLEarlyExit, LoopICLEarlyExitConfig
 
     checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
     model_config_dict = dict(checkpoint["config"])
     if "max_classes" in model_config_dict and "max_num_classes" not in model_config_dict:
         model_config_dict["max_num_classes"] = model_config_dict.pop("max_classes")
-    known = set(LoopICLEarlyExitV2Config.__dataclass_fields__)
+    known = set(LoopICLEarlyExitConfig.__dataclass_fields__)
     model_config_dict = {k: v for k, v in model_config_dict.items() if k in known}
-    model = LoopICLEarlyExitV2(**model_config_dict)
+    model = LoopICLEarlyExit(**model_config_dict)
     state_dict = checkpoint.get("ema_state_dict") or checkpoint["state_dict"]
     model.load_state_dict(state_dict)
     del checkpoint
@@ -119,7 +119,7 @@ def _load_ricotta_early_exit_v2_model(weights_path: str, device: str = "cpu") ->
     return model
 
 
-def _load_ricotta_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+def _load_loopicl_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
     """Load a LoopICLReg (quantile regression) checkpoint.
 
     Loads to CPU first (avoids 2× VRAM spike), then moves to device.
@@ -153,7 +153,7 @@ def _load_ricotta_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.
 # Calling-convention adapter
 # ---------------------------------------------------------------------------
 
-class _RicottaAdapter:
+class _LoopICLAdapter:
     """Adapts LoopICL.forward to the TabICLWrapper calling convention.
 
     TabICLWrapper calls ``model(X, y_train, return_logits=True)`` where:
@@ -171,20 +171,20 @@ class _RicottaAdapter:
 
     def __init__(
         self,
-        ricotta: torch.nn.Module,
+        loopicl: torch.nn.Module,
         num_loops: Optional[int] = None,
         test_chunk_size: Optional[int] = None,
         exit_q: Optional[float] = None,
         heuristic_exit_strategy: Optional[str] = None,
         heuristic_exit_threshold: Optional[float] = None,
     ) -> None:
-        self._ricotta = ricotta
+        self._loopicl = loopicl
         self._num_loops = num_loops
         self._test_chunk_size = test_chunk_size
         self._exit_q = exit_q
         self._heuristic_exit_strategy = heuristic_exit_strategy
         self._heuristic_exit_threshold = heuristic_exit_threshold
-        self.max_classes = ricotta.cfg.max_num_classes
+        self.max_classes = loopicl.cfg.max_num_classes
         # Persisted across calls: once a safe batch chunk size is found after
         # OOM, reuse it on subsequent calls instead of retrying from full size.
         self._safe_batch_chunk: Optional[int] = None
@@ -225,7 +225,7 @@ class _RicottaAdapter:
         torch.cuda.empty_cache()
         free_before, _ = torch.cuda.mem_get_info(X.device.index or 0)
         with torch.no_grad():
-            _ = self._ricotta(X[:1], y_full[:1], **kw)
+            _ = self._loopicl(X[:1], y_full[:1], **kw)
         torch.cuda.synchronize()
         free_after, _ = torch.cuda.mem_get_info(X.device.index or 0)
         mem_per = free_before - free_after
@@ -249,26 +249,26 @@ class _RicottaAdapter:
 
         chunk_size = min(self._safe_batch_chunk or X.shape[0], X.shape[0])
         if chunk_size >= X.shape[0]:
-            return self._ricotta(X, y_full, **kw)
+            return self._loopicl(X, y_full, **kw)
         parts = []
         for i in range(0, X.shape[0], chunk_size):
-            parts.append(self._ricotta(X[i:i + chunk_size], y_full[i:i + chunk_size], **kw))
+            parts.append(self._loopicl(X[i:i + chunk_size], y_full[i:i + chunk_size], **kw))
         return torch.cat(parts, dim=0)
 
-    def eval(self) -> "_RicottaAdapter":
-        self._ricotta.eval()
+    def eval(self) -> "_LoopICLAdapter":
+        self._loopicl.eval()
         return self
 
-    def train(self, mode: bool = True) -> "_RicottaAdapter":
-        self._ricotta.train(mode)
+    def train(self, mode: bool = True) -> "_LoopICLAdapter":
+        self._loopicl.train(mode)
         return self
 
-    def to(self, *args, **kwargs) -> "_RicottaAdapter":
-        self._ricotta.to(*args, **kwargs)
+    def to(self, *args, **kwargs) -> "_LoopICLAdapter":
+        self._loopicl.to(*args, **kwargs)
         return self
 
     def parameters(self):
-        return self._ricotta.parameters()
+        return self._loopicl.parameters()
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +459,7 @@ def _tune_threshold(proba_val: np.ndarray, y_val: np.ndarray) -> float:
 # Main runner
 # ---------------------------------------------------------------------------
 
-def run_ricotta(
+def run_loopicl(
     cfg: Dict[str, Any],
     train_val_data: Tuple,
     test_data: Tuple,
@@ -472,7 +472,7 @@ def run_ricotta(
     Parameters
     ----------
     cfg : dict
-        One entry from a ricotta_configs.py CONFIGS list.
+        One entry from a loopicl_configs.py CONFIGS list.
     train_val_data, test_data, info
         As returned by ``TALENT.model.lib.data.get_dataset``.
     seed_num : int
@@ -579,21 +579,21 @@ def run_ricotta(
             torch.cuda.manual_seed_all(seed)
 
         if model_type == "LoopICLEarlyExit":
-            ricotta_model = _load_ricotta_early_exit_model(weights_path, device=device)
-        elif model_type == "LoopICLEarlyExitV2":
-            ricotta_model = _load_ricotta_early_exit_v2_model(weights_path, device=device)
+            loopicl_model = _load_loopicl_early_exit_model(weights_path, device=device)
+        elif model_type == "LoopICLEarlyExit":
+            loopicl_model = _load_loopicl_early_exit_v2_model(weights_path, device=device)
         elif is_regression:
-            ricotta_model = _load_ricotta_reg_model(weights_path, device=device)
+            loopicl_model = _load_loopicl_reg_model(weights_path, device=device)
         else:
-            ricotta_model = _load_ricotta_model(weights_path, device=device)
+            loopicl_model = _load_loopicl_model(weights_path, device=device)
         if loop_residual_scaling_fn is not None:
-            ricotta_model.loop_residual_scaling_fn = loop_residual_scaling_fn
+            loopicl_model.loop_residual_scaling_fn = loop_residual_scaling_fn
         if loop_residual_entropy_gamma is not None:
-            ricotta_model.loop_residual_entropy_gamma = loop_residual_entropy_gamma
+            loopicl_model.loop_residual_entropy_gamma = loop_residual_entropy_gamma
         if delta_gate_tau is not None:
-            ricotta_model.delta_gate_tau = delta_gate_tau
-        adapter = _RicottaAdapter(
-            ricotta_model,
+            loopicl_model.delta_gate_tau = delta_gate_tau
+        adapter = _LoopICLAdapter(
+            loopicl_model,
             num_loops=num_loops,
             test_chunk_size=test_chunk_size,
             exit_q=exit_q,
@@ -684,7 +684,7 @@ def run_ricotta(
         predict_times.append(predict_time)
 
         # Free GPU memory before next seed
-        del ricotta_model, adapter, wrapper, clf
+        del loopicl_model, adapter, wrapper, clf
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -715,7 +715,7 @@ def run_ricotta(
         metrics_mean=m_mean,
         metrics_std=m_std,
         per_seed=per_seed,
-        method_type="ricotta",
+        method_type="loopicl",
         config=cfg,
         save_path=save_path,
     )

@@ -81,13 +81,13 @@ class _AttentionCapture:
       max_w[stream]     list of np.ndarray (H,)
     """
 
-    def __init__(self, ricotta_model: torch.nn.Module, num_train: int) -> None:
+    def __init__(self, loopicl_model: torch.nn.Module, num_train: int) -> None:
         self._num_train = num_train
         self._hooks: list = []
         self.entropy:  dict[str, list] = {"icl": [], "within_col": [], "cross_col": []}
         self.max_w:    dict[str, list] = {"icl": [], "within_col": [], "cross_col": []}
 
-        emb = ricotta_model.axial_embedder
+        emb = loopicl_model.axial_embedder
 
         for block in emb.icl_blocks:
             self._hooks.append(
@@ -231,7 +231,7 @@ class _HeadAblationHook:
 
 
 def forward_with_attention_head_stats(
-    ricotta: torch.nn.Module,
+    loopicl: torch.nn.Module,
     X_all: torch.Tensor,
     y_full: torch.Tensor,
     single_eval_pos: int,
@@ -241,7 +241,7 @@ def forward_with_attention_head_stats(
 
     Parameters
     ----------
-    ricotta          : trained LoopICL model (eval mode)
+    loopicl          : trained LoopICL model (eval mode)
     X_all            : (1, n_train + n_test, n_features)
     y_full           : (1, n_train + n_test)  — labels for train, 0 for test
     single_eval_pos  : n_train
@@ -257,16 +257,16 @@ def forward_with_attention_head_stats(
         n_icl_blocks   : int
         n_icl_heads    : int
     """
-    emb = ricotta.axial_embedder
+    emb = loopicl.axial_embedder
     n_icl_blocks   = len(emb.icl_blocks)
     n_within_blocks = len(emb.within_col_blocks)
     n_cross_blocks  = len(emb.cross_col_blocks)
     n_icl_heads = emb.icl_blocks[0].icl_attention.num_heads
 
-    capture = _AttentionCapture(ricotta, num_train=single_eval_pos)
+    capture = _AttentionCapture(loopicl, num_train=single_eval_pos)
     try:
         with torch.no_grad():
-            ricotta(X_all, y_full, single_eval_pos=single_eval_pos, num_loops=num_loops)
+            loopicl(X_all, y_full, single_eval_pos=single_eval_pos, num_loops=num_loops)
     finally:
         capture.remove()
 
@@ -289,7 +289,7 @@ def forward_with_attention_head_stats(
 
 
 def forward_with_head_ablation(
-    ricotta: torch.nn.Module,
+    loopicl: torch.nn.Module,
     X_all: torch.Tensor,
     y_full: torch.Tensor,
     single_eval_pos: int,
@@ -304,7 +304,7 @@ def forward_with_head_ablation(
 
     Parameters
     ----------
-    ricotta          : trained LoopICL model (eval mode)
+    loopicl          : trained LoopICL model (eval mode)
     X_all            : (1, n_train + n_test, n_features)
     y_full           : (1, n_train + n_test)
     single_eval_pos  : n_train
@@ -324,7 +324,7 @@ def forward_with_head_ablation(
         n_icl_blocks       : int
         n_icl_heads        : int
     """
-    emb = ricotta.axial_embedder
+    emb = loopicl.axial_embedder
     n_icl_blocks = len(emb.icl_blocks)
     n_icl_heads  = emb.icl_blocks[0].icl_attention.num_heads
 
@@ -347,7 +347,7 @@ def forward_with_head_ablation(
 
     # Baseline pass
     with torch.no_grad():
-        baseline_logits = ricotta(
+        baseline_logits = loopicl(
             X_all, y_full,
             single_eval_pos=single_eval_pos,
             num_loops=num_loops,
@@ -373,7 +373,7 @@ def forward_with_head_ablation(
             )
             try:
                 with torch.no_grad():
-                    abl_logits = ricotta(
+                    abl_logits = loopicl(
                         X_all, y_full,
                         single_eval_pos=single_eval_pos,
                         num_loops=num_loops,

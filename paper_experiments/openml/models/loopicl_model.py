@@ -5,7 +5,7 @@ sklearn interface, using the same fit/predict_proba/predict protocol as other op
 
 Usage in run_benchmark.py configs::
 
-    # configs/ricotta_c1.py
+    # configs/loopicl_c1.py
     CONFIG = {"name": "LoopICL-c1", "model": "LoopICL", "weights_path": "/path/to/step.ckpt"}
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import torch
 # ---------------------------------------------------------------------------
 
 
-def _load_ricotta_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+def _load_loopicl_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
     # Load to CPU first so we never hold both the checkpoint tensors and the
     # moved model simultaneously on GPU (which would temporarily use 2× VRAM).
     checkpoint = torch.load(weights_path, map_location="cpu")
@@ -46,7 +46,7 @@ def _load_ricotta_model(weights_path: str, device: str = "cpu") -> torch.nn.Modu
 # ---------------------------------------------------------------------------
 
 
-def _load_ricotta_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
+def _load_loopicl_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.Module:
     checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
     model_config_dict = dict(checkpoint["config"])
     if "max_classes" in model_config_dict and "max_num_classes" not in model_config_dict:
@@ -74,11 +74,11 @@ def _load_ricotta_reg_model(weights_path: str, device: str = "cpu") -> torch.nn.
 # ---------------------------------------------------------------------------
 
 
-class _RicottaForTabICL:
+class _LoopICLForTabICL:
     """Adapts LoopICL to the calling convention expected by IrisClassifier."""
 
-    def __init__(self, ricotta: torch.nn.Module, max_train_samples: int | None = None):
-        self._ricotta = ricotta
+    def __init__(self, loopicl: torch.nn.Module, max_train_samples: int | None = None):
+        self._loopicl = loopicl
         self._max_train_samples = max_train_samples
 
     def __call__(
@@ -101,28 +101,28 @@ class _RicottaForTabICL:
         y_full = torch.zeros(B, n_total, dtype=y_train.dtype, device=y_train.device)
         y_full[:, :n_train] = y_train
 
-        ricotta_kwargs: dict = {"single_eval_pos": n_train}
+        loopicl_kwargs: dict = {"single_eval_pos": n_train}
         if "num_loops" in kwargs:
-            ricotta_kwargs["num_loops"] = kwargs["num_loops"]
+            loopicl_kwargs["num_loops"] = kwargs["num_loops"]
 
-        return self._forward_with_oom_retry(X, y_full, ricotta_kwargs)
+        return self._forward_with_oom_retry(X, y_full, loopicl_kwargs)
 
-    def _forward_with_oom_retry(self, X, y_full, ricotta_kwargs):
+    def _forward_with_oom_retry(self, X, y_full, loopicl_kwargs):
         device = X.device
         chunk_size = X.shape[0]
 
         while True:
             try:
                 if X.device.type == device.type:
-                    return self._ricotta(X, y_full, **ricotta_kwargs)
+                    return self._loopicl(X, y_full, **loopicl_kwargs)
                 else:
                     results = []
                     for start in range(0, X.shape[0], chunk_size):
                         end = min(start + chunk_size, X.shape[0])
-                        out = self._ricotta(
+                        out = self._loopicl(
                             X[start:end].to(device),
                             y_full[start:end].to(device),
-                            **ricotta_kwargs,
+                            **loopicl_kwargs,
                         )
                         results.append(out)
                     return torch.cat(results, dim=0)
@@ -141,19 +141,19 @@ class _RicottaForTabICL:
                 print(f"[OOM] retrying with chunk_size={chunk_size}")
 
     def eval(self):
-        self._ricotta.eval()
+        self._loopicl.eval()
         return self
 
     def train(self, mode: bool = True):
-        self._ricotta.train(mode)
+        self._loopicl.train(mode)
         return self
 
     def to(self, *args, **kwargs):
-        self._ricotta.to(*args, **kwargs)
+        self._loopicl.to(*args, **kwargs)
         return self
 
     def parameters(self):
-        return self._ricotta.parameters()
+        return self._loopicl.parameters()
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ class _RicottaForTabICL:
 # ---------------------------------------------------------------------------
 
 
-class RicottaModel:
+class LoopICLModel:
     """LoopICL in-context learning model for binary / multiclass classification.
 
     Hyperparameters (pass via config)
@@ -265,7 +265,7 @@ class RicottaModel:
         self.attention_head_metrics: dict | None = None
 
     def _load_weights(self, weights_path: str, device: str) -> torch.nn.Module:
-        return _load_ricotta_model(weights_path, device=device)
+        return _load_loopicl_model(weights_path, device=device)
 
     def fit(self, X: pd.DataFrame, y: pd.Series, problem_type: str) -> None:
         import torch
@@ -278,14 +278,14 @@ class RicottaModel:
             reg_path = self._weights_path_reg or self._weights_path
             if not reg_path:
                 raise ValueError(
-                    "RicottaModel requires 'weights_path_reg' (or 'weights_path') for regression."
+                    "LoopICLModel requires 'weights_path_reg' (or 'weights_path') for regression."
                 )
             from loopicl.interface import LoopICLTabICLRegressor
             from loopicl.interface.wrap_model import LoopICLRegWrapper
 
-            ricotta = _load_ricotta_reg_model(reg_path, device=device)
-            self._ricotta = ricotta
-            adapter = _RicottaForTabICL(ricotta)
+            loopicl = _load_loopicl_reg_model(reg_path, device=device)
+            self._loopicl = loopicl
+            adapter = _LoopICLForTabICL(loopicl)
             wrapper = LoopICLRegWrapper(adapter, device, dtype="bfloat16", num_loops=self._num_loops)
             clf = LoopICLTabICLRegressor(
                 wrapper=wrapper,
@@ -297,23 +297,23 @@ class RicottaModel:
         else:
             if not self._weights_path:
                 raise ValueError(
-                    "RicottaModel requires a 'weights_path' pointing to a trained LoopICL checkpoint."
+                    "LoopICLModel requires a 'weights_path' pointing to a trained LoopICL checkpoint."
                 )
             from loopicl.interface import LoopICLClassifier
             from loopicl.interface.wrap_model import TabICLWrapper
 
-            ricotta = self._load_weights(self._weights_path, device=device)
-            self._ricotta = ricotta  # kept for compute_hs_metrics()
+            loopicl = self._load_weights(self._weights_path, device=device)
+            self._loopicl = loopicl  # kept for compute_hs_metrics()
 
-            if self._loop_residual_n_for_scaling is not None and ricotta.use_loop_residual_scaling:
-                actual_n = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
-                ricotta.loop_residual_lambda *= actual_n / self._loop_residual_n_for_scaling
+            if self._loop_residual_n_for_scaling is not None and loopicl.use_loop_residual_scaling:
+                actual_n = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
+                loopicl.loop_residual_lambda *= actual_n / self._loop_residual_n_for_scaling
             if self._loop_residual_scaling_fn is not None:
-                ricotta.loop_residual_scaling_fn = self._loop_residual_scaling_fn
+                loopicl.loop_residual_scaling_fn = self._loop_residual_scaling_fn
             if self._loop_residual_scaling_n_ref is not None:
-                ricotta.loop_residual_scaling_n_ref = self._loop_residual_scaling_n_ref
+                loopicl.loop_residual_scaling_n_ref = self._loop_residual_scaling_n_ref
 
-            adapter = _RicottaForTabICL(ricotta)
+            adapter = _LoopICLForTabICL(loopicl)
             wrapper = TabICLWrapper(adapter, device, dtype="bfloat16", num_loops=self._num_loops)
             clf = LoopICLClassifier(
                 wrapper=wrapper,
@@ -359,11 +359,11 @@ class RicottaModel:
         self.hs_metrics  : None  (not computed)
         """
         import torch
-        from models.ricotta_hs_forward import forward_loop_predictions_only
+        from models.loopicl_hs_forward import forward_loop_predictions_only
 
         clf     = self._model
         device  = self._device
-        ricotta = self._ricotta
+        loopicl = self._loopicl
 
         X_train = X_train.copy(); X_train.columns = X_train.columns.astype(str)
         X_test  = X_test.copy();  X_test.columns  = X_test.columns.astype(str)
@@ -390,11 +390,11 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        num_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        num_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
 
         with torch.no_grad():
             _, all_loop_logits = forward_loop_predictions_only(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,
                 test_chunk_size=self._test_chunk_size,
@@ -445,11 +445,11 @@ class RicottaModel:
             Index 0 = pre-loop init.  Only set when capture_embeddings=True.
         """
         import torch
-        from models.ricotta_hs_forward import forward_with_hs_metrics
+        from models.loopicl_hs_forward import forward_with_hs_metrics
 
         clf    = self._model   # fitted IrisClassifier
         device = self._device
-        ricotta = self._ricotta
+        loopicl = self._loopicl
 
         # ── Feature preprocessing (same XEncoder fitted during fit()) ──────
         X_train = X_train.copy(); X_train.columns = X_train.columns.astype(str)
@@ -485,13 +485,13 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=y_dtype, device=device)
         y_full[:, :n_train] = y_tr
 
-        num_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        num_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
 
         y_int_train = None if is_regression else y_tr_enc.astype(np.int64)
 
         with torch.no_grad():
             _, all_loop_logits, metrics, embeddings = forward_with_hs_metrics(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,
                 y_int_train=y_int_train,
@@ -556,11 +556,11 @@ class RicottaModel:
           at each loop iteration
         """
         import torch
-        from models.ricotta_kv_rank import forward_with_kv_rank_metrics
+        from models.loopicl_kv_rank import forward_with_kv_rank_metrics
 
         clf     = self._model
         device  = self._device
-        ricotta = self._ricotta
+        loopicl = self._loopicl
 
         import time as _time
         X_train = X_train.copy(); X_train.columns = X_train.columns.astype(str)
@@ -594,13 +594,13 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        num_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        num_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
         print(f"        [kv] num_loops={num_loops}")
 
         _t = _time.time()
         with torch.no_grad():
             _, kv_metrics = forward_with_kv_rank_metrics(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,
             )
@@ -640,7 +640,7 @@ class RicottaModel:
         import time
         import torch
         from sklearn.metrics import roc_auc_score, log_loss, mean_squared_error
-        from models.ricotta_kv_rank import (
+        from models.loopicl_kv_rank import (
             forward_with_kv_compression,
             forward_with_kv_reuse,
             forward_with_kv_mean_reuse,
@@ -649,7 +649,7 @@ class RicottaModel:
         )
 
         clf     = self._model
-        ricotta = self._ricotta
+        loopicl = self._loopicl
         device  = self._device
         is_cuda = (device != "cpu") and torch.cuda.is_available()
 
@@ -677,7 +677,7 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        n_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        n_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
         n_cls   = clf.n_classes_
         T       = getattr(clf, "softmax_temperature", 1.0) or 1.0
 
@@ -722,7 +722,7 @@ class RicottaModel:
 
         # ---- Full-rank baseline (score + time) ----
         logits, full_ms = _timed(
-            lambda: ricotta(X_all, y_full, single_eval_pos=n_train, num_loops=n_loops)
+            lambda: loopicl(X_all, y_full, single_eval_pos=n_train, num_loops=n_loops)
         )
         metric_name, score = _score(_logits_to_proba(logits))
         results["metric"]       = metric_name
@@ -734,7 +734,7 @@ class RicottaModel:
         # ---- KV reuse (loop-1 / block-0 frozen for all subsequent passes) ----
         logits_reuse, reuse_ms = _timed(
             lambda: forward_with_kv_reuse(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=n_loops,
             )
@@ -748,7 +748,7 @@ class RicottaModel:
         # ---- KV mean reuse (mean K/V across all loops/blocks frozen) ----
         logits_mean, mean_ms = _timed(
             lambda: forward_with_kv_mean_reuse(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=n_loops,
             )
@@ -762,7 +762,7 @@ class RicottaModel:
         # ---- KV last reuse (last-loop K/V frozen for all loops/blocks) ----
         logits_last, last_ms = _timed(
             lambda: forward_with_kv_last_reuse(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=n_loops,
             )
@@ -777,7 +777,7 @@ class RicottaModel:
         for stable_frac in (0.25, 0.50, 0.75):
             logits_ds, ds_ms = _timed(
                 lambda f=stable_frac: forward_with_kv_dim_split_reuse(
-                    ricotta, X_all, y_full,
+                    loopicl, X_all, y_full,
                     single_eval_pos=n_train,
                     stable_frac=f,
                     num_loops=n_loops,
@@ -794,7 +794,7 @@ class RicottaModel:
         for rank_k in self._kv_compress_ranks:
             logits_k, rank_ms = _timed(
                 lambda r=rank_k: forward_with_kv_compression(
-                    ricotta, X_all, y_full,
+                    loopicl, X_all, y_full,
                     single_eval_pos=n_train,
                     rank_k=r,
                     num_loops=n_loops,
@@ -807,14 +807,14 @@ class RicottaModel:
                   f"drop={results['full'] - score_k:+.4f}  time={rank_ms:.1f}ms")
 
         # ---- Prefill + predict_cached (when supported by this model variant) ----
-        if hasattr(ricotta, "prefill") and hasattr(ricotta, "predict_cached"):
-            from models.ricotta_kv_rank import _KVCompressionHooks
+        if hasattr(loopicl, "prefill") and hasattr(loopicl, "predict_cached"):
+            from models.loopicl_kv_rank import _KVCompressionHooks
 
             # Full rank: one-time train cost + per-query cached cost
-            _, prefill_ms = _timed(lambda: ricotta.prefill(X_tr, y_tr, num_loops=n_loops))
+            _, prefill_ms = _timed(lambda: loopicl.prefill(X_tr, y_tr, num_loops=n_loops))
             with torch.no_grad():
-                cache = ricotta.prefill(X_tr, y_tr, num_loops=n_loops)
-            _, cached_ms = _timed(lambda: ricotta.predict_cached(X_te, cache))
+                cache = loopicl.prefill(X_tr, y_tr, num_loops=n_loops)
+            _, cached_ms = _timed(lambda: loopicl.predict_cached(X_te, cache))
             results["prefill_time_ms"] = prefill_ms
             results["cached_time_ms"]  = cached_ms
             speedup = full_ms / cached_ms if cached_ms > 0 else float("inf")
@@ -827,9 +827,9 @@ class RicottaModel:
                 # Time prefill with rank-k hooks active (KVs compressed at capture time)
                 def _prefill_compressed(r=rank_k):
                     h = _KVCompressionHooks(r)
-                    h.register(ricotta)
+                    h.register(loopicl)
                     try:
-                        return ricotta.prefill(X_tr, y_tr, num_loops=n_loops)
+                        return loopicl.prefill(X_tr, y_tr, num_loops=n_loops)
                     finally:
                         h.remove()
 
@@ -837,14 +837,14 @@ class RicottaModel:
 
                 # Build a fresh compressed cache then time predict_cached
                 hooks_k = _KVCompressionHooks(rank_k)
-                hooks_k.register(ricotta)
+                hooks_k.register(loopicl)
                 try:
                     with torch.no_grad():
-                        cache_k = ricotta.prefill(X_tr, y_tr, num_loops=n_loops)
+                        cache_k = loopicl.prefill(X_tr, y_tr, num_loops=n_loops)
                 finally:
                     hooks_k.remove()
 
-                _, c_ms = _timed(lambda c=cache_k: ricotta.predict_cached(X_te, c))
+                _, c_ms = _timed(lambda c=cache_k: loopicl.predict_cached(X_te, c))
                 results[f"prefill_rank_{rank_k}_time_ms"] = p_ms
                 results[f"cached_rank_{rank_k}_time_ms"]  = c_ms
                 speedup_k = full_ms / c_ms if c_ms > 0 else float("inf")
@@ -894,7 +894,7 @@ class RicottaModel:
         from sklearn.metrics import roc_auc_score, log_loss, mean_squared_error
 
         clf     = self._model
-        ricotta = self._ricotta
+        loopicl = self._loopicl
         device  = self._device
         is_cuda = (device != "cpu") and torch.cuda.is_available()
 
@@ -931,7 +931,7 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        n_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        n_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
         n_cls   = clf.n_classes_
         T       = getattr(clf, "softmax_temperature", 1.0) or 1.0
 
@@ -1077,7 +1077,7 @@ class RicottaModel:
         # Without this the forward runs in float32 (2× larger activations),
         # causing OOM on datasets like Amazon while predict_proba succeeds.
         metric_name, score, time_ms, peak_mb, params_mb, act_mb = _run_mode(
-            ricotta, autocast_dtype=torch.bfloat16
+            loopicl, autocast_dtype=torch.bfloat16
         )
         results["metric"]                  = metric_name
         results["baseline_score"]          = score
@@ -1094,7 +1094,7 @@ class RicottaModel:
         # for compute.  Memory-bandwidth win; no extra FLOPs.
         try:
             quantize_, int8_weight_only = _ao_import("quantize_", "int8_weight_only")
-            model_w8 = copy.deepcopy(ricotta)
+            model_w8 = copy.deepcopy(loopicl)
             quantize_(model_w8, int8_weight_only(), filter_fn=_quant_filter)
             _, score_w8, time_w8, peak_w8, params_w8, act_w8 = _run_mode(
                 model_w8, autocast_dtype=torch.bfloat16
@@ -1136,7 +1136,7 @@ class RicottaModel:
             # quantize_() requires BF16 model weights; cast before quantizing.
             # autocast handles intermediate float32 tensors during the forward pass
             # (e.g. from non-matmul ops that stay float32 between quantized layers).
-            model_w4 = copy.deepcopy(ricotta).bfloat16()
+            model_w4 = copy.deepcopy(loopicl).bfloat16()
             quantize_(model_w4, int4_weight_only(group_size=128), filter_fn=_quant_filter)
             _, score_w4, time_w4, peak_w4, params_w4, act_w4 = _run_mode(
                 model_w4, input_dtype=torch.bfloat16, autocast_dtype=torch.bfloat16
@@ -1188,7 +1188,7 @@ class RicottaModel:
                     else:
                         _replace_with_bnb4(child)
 
-            model_nf4 = copy.deepcopy(ricotta).bfloat16()
+            model_nf4 = copy.deepcopy(loopicl).bfloat16()
             _replace_with_bnb4(model_nf4)
             # bitsandbytes quantizes Params4bit on first .cuda() / .to(device) call
             model_nf4.to(device)
@@ -1222,7 +1222,7 @@ class RicottaModel:
             quantize_, int8_dynamic_activation_int8_weight = _ao_import(
                 "quantize_", "int8_dynamic_activation_int8_weight"
             )
-            model_c8 = copy.deepcopy(ricotta)
+            model_c8 = copy.deepcopy(loopicl)
             quantize_(model_c8, int8_dynamic_activation_int8_weight(), filter_fn=_quant_filter)
             # torchao quantize_() is designed to be paired with torch.compile;
             # without it the per-token quant overhead dominates.
@@ -1265,7 +1265,7 @@ class RicottaModel:
                     )
             import importlib
             _ao_mod = importlib.import_module("torchao.quantization")
-            model_c4 = copy.deepcopy(ricotta)
+            model_c4 = copy.deepcopy(loopicl)
             if hasattr(_ao_mod, "Int8DynActInt4WeightConfig"):
                 # Newer torchao: use quantize_() with filter_fn support
                 quantize_, _cfg = _ao_import("quantize_", "int8_dynamic_activation_int8_weight")
@@ -1384,7 +1384,7 @@ class RicottaModel:
             # Step 1 — calibration: collect per-layer activation absmax.
             _act_scales: dict[str, float] = {}
             _hooks = []
-            for _nm, _md in ricotta.named_modules():
+            for _nm, _md in loopicl.named_modules():
                 if isinstance(_md, torch.nn.Linear) and _quant_filter(_md, _nm):
                     def _make_hook(name):
                         def _h(m, inp, _out):
@@ -1398,12 +1398,12 @@ class RicottaModel:
                 if is_cuda else contextlib.nullcontext()
             )
             with _ac_cal, torch.no_grad():
-                ricotta(X_all, y_full, single_eval_pos=n_train, num_loops=n_loops)
+                loopicl(X_all, y_full, single_eval_pos=n_train, num_loops=n_loops)
             for _h in _hooks:
                 _h.remove()
 
             # Step 2 — replace qualifying nn.Linear with _StaticInt8Linear.
-            model_c8s = copy.deepcopy(ricotta)
+            model_c8s = copy.deepcopy(loopicl)
             for _nm, _md in list(model_c8s.named_modules()):
                 if (not isinstance(_md, torch.nn.Linear)
                         or not _quant_filter(_md, _nm)
@@ -1472,7 +1472,7 @@ class RicottaModel:
         # dispatch to TRT for their portion only.
         try:
             import torch_tensorrt  # noqa: F401 – import check; used via backend=
-            model_trt = copy.deepcopy(ricotta)
+            model_trt = copy.deepcopy(loopicl)
             _mlp_names = ("MLP", "GatedMLP")
             _n_compiled = 0
             for _nm, _md in list(model_trt.named_modules()):
@@ -1540,13 +1540,13 @@ class RicottaModel:
         See paper/notebooks/attention_heads/ for analysis of the resulting data.
         """
         import torch
-        from models.ricotta_attention_heads_forward import (
+        from models.loopicl_attention_heads_forward import (
             forward_with_attention_head_stats,
             forward_with_head_ablation,
         )
 
         clf     = self._model
-        ricotta = self._ricotta
+        loopicl = self._loopicl
         device  = self._device
 
         X_train = X_train.copy(); X_train.columns = X_train.columns.astype(str)
@@ -1573,17 +1573,17 @@ class RicottaModel:
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        model_dtype = next(ricotta.parameters()).dtype
+        model_dtype = next(loopicl.parameters()).dtype
         X_all  = X_all.to(model_dtype)
 
-        num_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        num_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
 
         stats_result    = None
         ablation_result = None
 
         if self.capture_attention_heads:
             stats_result = forward_with_attention_head_stats(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,
             )
@@ -1591,7 +1591,7 @@ class RicottaModel:
         if self.capture_head_ablation:
             y_te_int = clf.y_encoder_.transform(y_test).astype(np.int64)
             ablation_result = forward_with_head_ablation(
-                ricotta, X_all, y_full,
+                loopicl, X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,
                 y_te_int=y_te_int,
@@ -1626,92 +1626,92 @@ def _load_ablation_model(cls_import_path: tuple[str, str], weights_path: str, de
     return model
 
 
-class RicottaNormHistModel(RicottaModel):
-    name = "RicottaNormHist"
+class LoopICLNormHistModel(LoopICLModel):
+    name = "LoopICLNormHist"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_norm_hist", "RicottaNormHist"),
+            ("loopicl.models.loopicl.model_norm_hist", "LoopICLNormHist"),
             weights_path, device,
         )
 
 
-class RicottaNormHistNoShiftModel(RicottaModel):
-    name = "RicottaNormHistNoShift"
+class LoopICLNormHistNoShiftModel(LoopICLModel):
+    name = "LoopICLNormHistNoShift"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_norm_hist_no_shift", "RicottaNormHistNoShift"),
+            ("loopicl.models.loopicl.model_norm_hist_no_shift", "LoopICLNormHistNoShift"),
             weights_path, device,
         )
 
 
-class RicottaNormHistChunkModel(RicottaModel):
-    name = "RicottaNormHistChunk"
+class LoopICLNormHistChunkModel(LoopICLModel):
+    name = "LoopICLNormHistChunk"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_norm_hist_chunk", "RicottaNormHistChunk"),
+            ("loopicl.models.loopicl.model_norm_hist_chunk", "LoopICLNormHistChunk"),
             weights_path, device,
         )
 
 
-class RicottaSandwichModel(RicottaModel):
-    name = "RicottaSandwich"
+class LoopICLSandwichModel(LoopICLModel):
+    name = "LoopICLSandwich"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_sandwich", "RicottaSandwich"),
+            ("loopicl.models.loopicl.model_sandwich", "LoopICLSandwich"),
             weights_path, device,
         )
 
 
-class PairedColRicottaModel(RicottaModel):
-    name = "PairedColRicotta"
+class PairedColLoopICLModel(LoopICLModel):
+    name = "PairedColLoopICL"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_paired_col", "PairedColRicotta"),
+            ("loopicl.models.loopicl.model_paired_col", "PairedColLoopICL"),
             weights_path, device,
         )
 
 
-class LabelPairedRicottaModel(RicottaModel):
-    name = "LabelPairedRicotta"
+class LabelPairedLoopICLModel(LoopICLModel):
+    name = "LabelPairedLoopICL"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_paired_col", "LabelPairedRicotta"),
+            ("loopicl.models.loopicl.model_paired_col", "LabelPairedLoopICL"),
             weights_path, device,
         )
 
 
-class RicottaUnrolledModel(RicottaModel):
-    name = "RicottaUnrolled"
+class LoopICLUnrolledModel(LoopICLModel):
+    name = "LoopICLUnrolled"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model", "RicottaUnrolled"),
+            ("loopicl.models.loopicl.model", "LoopICLUnrolled"),
             weights_path, device,
         )
 
 
-class QuadColRicottaModel(RicottaModel):
-    name = "QuadColRicotta"
+class QuadColLoopICLModel(LoopICLModel):
+    name = "QuadColLoopICL"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_quad_col", "QuadColRicotta"),
+            ("loopicl.models.loopicl.model_quad_col", "QuadColLoopICL"),
             weights_path, device,
         )
 
 
-class TabFMEmbedRicottaModel(RicottaModel):
-    name = "TabFMEmbedRicotta"
+class TabFMEmbedLoopICLModel(LoopICLModel):
+    name = "TabFMEmbedLoopICL"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_tabfm_embed", "TabFMEmbedRicotta"),
+            ("loopicl.models.loopicl.model_tabfm_embed", "TabFMEmbedLoopICL"),
             weights_path, device,
         )
 
 
-class FeatCircShiftRicottaModel(RicottaModel):
-    name = "FeatCircShiftRicotta"
+class FeatCircShiftLoopICLModel(LoopICLModel):
+    name = "FeatCircShiftLoopICL"
     def _load_weights(self, weights_path, device):
         return _load_ablation_model(
-            ("ricotta.models.ricotta.model_feat_circ", "FeatCircShiftRicotta"),
+            ("loopicl.models.loopicl.model_feat_circ", "FeatCircShiftLoopICL"),
             weights_path, device,
         )
 
@@ -1721,10 +1721,10 @@ class FeatCircShiftRicottaModel(RicottaModel):
 # ---------------------------------------------------------------------------
 
 
-class RicottaEarlyExitModel(RicottaModel):
+class LoopICLEarlyExitModel(LoopICLModel):
     """LoopICL early-exit model that captures gate λ values per loop.
 
-    Accepts all standard RicottaModel fields plus:
+    Accepts all standard LoopICLModel fields plus:
 
     exit_q : float
         Quantile threshold used during normal predict_proba inference
@@ -1752,7 +1752,7 @@ class RicottaEarlyExitModel(RicottaModel):
 
     def _load_weights(self, weights_path: str, device: str) -> torch.nn.Module:
         model = _load_ablation_model(
-            ("ricotta.models.ricotta.model_early_exit", "LoopICLEarlyExit"),
+            ("loopicl.models.loopicl.model_early_exit", "LoopICLEarlyExit"),
             weights_path, device,
         )
         # Apply config-specified exit_q (overrides the checkpoint's stored default)
@@ -1781,7 +1781,7 @@ class RicottaEarlyExitModel(RicottaModel):
         """
         clf     = self._model
         device  = self._device
-        ricotta = self._ricotta
+        loopicl = self._loopicl
 
         X_train = X_train.copy(); X_train.columns = X_train.columns.astype(str)
         X_test  = X_test.copy();  X_test.columns  = X_test.columns.astype(str)
@@ -1807,10 +1807,10 @@ class RicottaEarlyExitModel(RicottaModel):
         y_full = torch.zeros(1, n_total, dtype=torch.long, device=device)
         y_full[:, :n_train] = y_tr
 
-        num_loops = self._num_loops if self._num_loops is not None else ricotta.num_icl_loops
+        num_loops = self._num_loops if self._num_loops is not None else loopicl.num_icl_loops
 
         with torch.no_grad():
-            all_logits, all_lambdas = ricotta(
+            all_logits, all_lambdas = loopicl(
                 X_all, y_full,
                 single_eval_pos=n_train,
                 num_loops=num_loops,

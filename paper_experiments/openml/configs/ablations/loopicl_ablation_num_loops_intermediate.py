@@ -1,27 +1,14 @@
-"""num_loops ablation with lightweight intermediate predictions.
-
-Same structure as ricotta_ablation_num_loops.py (one experiment per model per
-loop count) but uses ``capture_loop_predictions`` instead of
-``capture_hidden_states``.  This skips CKA, L2 deltas, and layer matrices,
-so each experiment runs much faster while still storing per-loop logits,
-loop_scores, and loop_loglosses in the result.
-
-Run with:
-    python benchmark_eval/openml/run_benchmark.py --dataset dev-cls  --config ablations.ricotta_ablation_num_loops_intermediate
-
-"""
-
-CHECKPOINT_DIR_ABLATION = "../TICLA/results/workdir/ricotta_exp/"
+CHECKPOINT_DIR_ABLATION =  "please_replace_with_actual_path"
 
 CHECKPOINT_STEP = 10_000
 NUM_LOOPS_VALUES = list(range(1, 20+1))
 
 _BASE = {
     "save_mode":                 "single_file",
-    "interface":                 "ricotta",
+    "interface":                 "loopicl",
     "batch_size":                1,
     "n_estimators":              1,
-    "multiclass_strategy":       "tabpfn",
+    "multiclass_strategy":       "prob_avg",
     "subsample_samples":         None,
     "subsample_train":           None,
     "subsample_test":            None,
@@ -39,9 +26,9 @@ def _abl(exp_name):
 
 # (display_name, checkpoint_name, extra_params)
 _MODEL_SPECS = [
-    ("ricotta_one_layer_ablation_stage2",    "ricotta_one_layer_ablation_stage2",    {}),
-    ("ricotta_no_scaling_ablation_stage2",   "ricotta_no_scaling_ablation_stage2",   {}),
-    ("ricotta_light_scaling_ablation_stage2","ricotta_light_scaling_ablation_stage2",{}),
+    ("residual_scaling_one_over_L_stage2",      "residual_scaling_one_over_L_stage2",      {}),
+    ("no_residual_scaling_stage2",              "no_residual_scaling_stage2",              {}),
+    ("residual_scaling_one_over_sqrt_L_stage2", "residual_scaling_one_over_sqrt_L_stage2", {}),
 ]
 
 CONFIGS = [

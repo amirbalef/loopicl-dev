@@ -41,9 +41,9 @@ Usage examples
   # Override raw TALENT folder:
   uv run benchmark_eval/talent/run_benchmark_talent.py --talent-folder /path/to/talent/data
 
-  # Run LoopICL via a named config (loads configs/ricotta_configs.py):
+  # Run LoopICL via a named config (loads configs/loopicl_configs.py):
   uv run benchmark_eval/talent/run_benchmark_talent.py \\
-      --config ricotta_configs \\
+      --config loopicl_configs \\
       --dataset talent-lite --models LoopICL-base-v1-stage1
 
 Output
@@ -58,7 +58,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path as _Path
 
-# Ensure the project root (ricotta-dev/) is in sys.path so that
+# Ensure the project root (loopicl-dev/) is in sys.path so that
 # `benchmark_eval` is importable regardless of how this script is invoked.
 _project_root = str(_Path(__file__).resolve().parents[2])
 if _project_root not in sys.path:
@@ -79,11 +79,11 @@ _patches_spec.loader.exec_module(_patches_mod)
 _patches_mod.apply_all()
 
 # ---------------------------------------------------------------------------
-# LoopICL config registry (populated at startup from --ricotta-config file)
+# LoopICL config registry (populated at startup from --loopicl-config file)
 # ---------------------------------------------------------------------------
 
 # Maps friendly model name (e.g. "LoopICL-v1") → config dict from the config file.
-# Populated by _load_ricotta_config() before the main run loop.
+# Populated by _load_loopicl_config() before the main run loop.
 RICOTTA_CONFIGS: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
@@ -346,14 +346,14 @@ def _register_configs(configs: list[dict]) -> None:
             print(f"  [warn] Config entry missing 'name', skipping: {cfg}")
             continue
         RICOTTA_CONFIGS[name] = cfg
-        MODEL_MAP[name] = "ricotta"
+        MODEL_MAP[name] = "loopicl"
     print(
-        f"  [ricotta] Registered {len(RICOTTA_CONFIGS)} config(s): "
+        f"  [loopicl] Registered {len(RICOTTA_CONFIGS)} config(s): "
         f"{list(RICOTTA_CONFIGS)}"
     )
 
 
-def _run_one_ricotta(
+def _run_one_loopicl(
     friendly_name: str,
     dataset_name: str,
     talent_folder: Path,
@@ -362,7 +362,7 @@ def _run_one_ricotta(
     overwrite: bool,
 ) -> bool:
     """Run a single (LoopICL config, dataset) pair. Returns True on success."""
-    from benchmark_eval.talent.models.ricotta_runner import run_ricotta
+    from benchmark_eval.talent.models.loopicl_runner import run_loopicl
 
     cfg = RICOTTA_CONFIGS.get(friendly_name)
     if cfg is None:
@@ -400,7 +400,7 @@ def _run_one_ricotta(
     Path(save_path).mkdir(parents=True, exist_ok=True)
 
     try:
-        result = run_ricotta(
+        result = run_loopicl(
             cfg,
             train_val_data,
             test_data,
@@ -409,7 +409,7 @@ def _run_one_ricotta(
             save_path=save_path,
         )
     except Exception as exc:
-        print(f"    [error] run_ricotta failed: {exc}")
+        print(f"    [error] run_loopicl failed: {exc}")
         traceback.print_exc()
         return False
 
@@ -447,7 +447,7 @@ def resolve_models(model_names: list[str]) -> list[tuple[str, str]]:
         talent_name = MODEL_MAP[name]
         # LoopICL configs are distinguished by their friendly name (each has its
         # own config), so skip dedup for them.
-        if talent_name != "ricotta":
+        if talent_name != "loopicl":
             if talent_name in seen_talent:
                 print(
                     f"  [dedup] {name!r} resolves to the same TALENT model as "
@@ -537,8 +537,8 @@ def run_one(
         )
 
     # LoopICL models use a custom runner (not the TALENT registry).
-    if talent_name == "ricotta":
-        return _run_one_ricotta(
+    if talent_name == "loopicl":
+        return _run_one_loopicl(
             friendly_name=friendly_name,
             dataset_name=dataset_name,
             talent_folder=talent_folder,
@@ -690,7 +690,7 @@ def parse_args() -> argparse.Namespace:
             "Comma-separated config names from benchmark_eval/talent/configs/*.py. "
             "Each config defines LoopICL model variants (name, weights_path, HPs). "
             "All named entries are registered and can be selected via --models. "
-            "Example: --config ricotta_configs"
+            "Example: --config loopicl_configs"
         ),
     )
     return parser.parse_args()
