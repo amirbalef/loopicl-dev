@@ -1,6 +1,6 @@
 # LoopICL
 
-LoopICL is a looped in-context learning foundation model for tabular data, submitted for reproducibility at ICLR.
+LoopICL is a looped in-context learning foundation model for tabular data.
 
 ## Installation
 
